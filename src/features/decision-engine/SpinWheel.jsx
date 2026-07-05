@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { computeSpinRotation, computeWeights } from './weighting'
+import { computeBadgeSize } from './badgeSize'
 import { playTickSound } from './playTickSound'
 import { playRevealChime } from './playRevealChime'
 import { fireRevealConfetti } from './fireRevealConfetti'
@@ -8,7 +9,14 @@ import Curtain from '../../shared/Curtain'
 const RADIUS = 90
 const CENTER = 100
 const BADGE_RADIUS = 58 // distance from center to each slice's poster badge
-const BADGE_SIZE = 15 // poster badge radius
+// Badge radius is no longer a single fixed number — see badgeSize.js for
+// why: the pool has no size cap, so a fixed value is either too small for
+// a short pool or crowds badges together once a group's repo grows. MIN is
+// exactly the old fixed value (never worse than before this existed); MAX
+// is the biggest a badge is allowed to get even when there's plenty of
+// room, so a 2-3 movie pool doesn't blow up into oversized circles.
+const BADGE_SIZE_MIN = 15
+const BADGE_SIZE_MAX = 22
 const HUB_RADIUS = 17
 const POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w92'
 const REVEAL_POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w154' // bigger than a wheel badge — this is the reveal itself, not a label
@@ -160,6 +168,15 @@ export default function SpinWheel({ pool, spinning, targetMovie, animationMs = 2
     const midAngle = (startAngle + endAngle) / 2
     return { movie, startAngle, endAngle, midAngle }
   })
+  // Recomputed every render off the pool actually on the wheel right now —
+  // cheap (a handful of trig calls), and it's exactly this render's slice
+  // layout that determines how much room badges have, not some cached
+  // value from a previous pool size.
+  const badgeSize = computeBadgeSize(
+    slices.map((slice) => slice.midAngle),
+    BADGE_RADIUS,
+    { min: BADGE_SIZE_MIN, max: BADGE_SIZE_MAX }
+  )
 
   const curtainOpen = revealPhase === 'curtain' || revealPhase === 'revealed'
   const contentVisible = revealPhase !== 'paused'
@@ -231,7 +248,7 @@ export default function SpinWheel({ pool, spinning, targetMovie, animationMs = 2
                 <circle
                   cx={pos.x}
                   cy={pos.y}
-                  r={BADGE_SIZE + (movie.spotlighted ? 3 : 2)}
+                  r={badgeSize + (movie.spotlighted ? 3 : 2)}
                   fill="none"
                   stroke={movie.spotlighted ? 'var(--color-gold)' : 'var(--color-warmgray)'}
                   strokeOpacity={movie.spotlighted ? '1' : '0.6'}
@@ -240,25 +257,25 @@ export default function SpinWheel({ pool, spinning, targetMovie, animationMs = 2
                 {movie.poster_path ? (
                   <>
                     <clipPath id={clipId}>
-                      <circle cx={pos.x} cy={pos.y} r={BADGE_SIZE} />
+                      <circle cx={pos.x} cy={pos.y} r={badgeSize} />
                     </clipPath>
                     <image
                       href={`${POSTER_BASE_URL}${movie.poster_path}`}
-                      x={pos.x - BADGE_SIZE}
-                      y={pos.y - BADGE_SIZE}
-                      width={BADGE_SIZE * 2}
-                      height={BADGE_SIZE * 2}
+                      x={pos.x - badgeSize}
+                      y={pos.y - badgeSize}
+                      width={badgeSize * 2}
+                      height={badgeSize * 2}
                       preserveAspectRatio="xMidYMid slice"
                       clipPath={`url(#${clipId})`}
                     />
                   </>
                 ) : (
-                  <circle cx={pos.x} cy={pos.y} r={BADGE_SIZE} fill="var(--color-page)" />
+                  <circle cx={pos.x} cy={pos.y} r={badgeSize} fill="var(--color-page)" />
                 )}
                 {movie.spotlighted && (
                   <text
                     x={pos.x}
-                    y={pos.y - BADGE_SIZE + 2}
+                    y={pos.y - badgeSize + 2}
                     textAnchor="middle"
                     fontSize="10"
                     fill="var(--color-gold)"
