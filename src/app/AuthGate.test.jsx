@@ -14,9 +14,18 @@ vi.mock('./DisplayNamePrompt', () => ({
     <button onClick={() => onSaved('Vikram')}>Display name prompt stub</button>
   ),
 }))
+// onAuthStateChange's callback is captured (not just stubbed) so tests below
+// can simulate Supabase firing a background session event — a token
+// refresh or a tab-visibility revalidation, the two real triggers behind
+// the "Manage Invites silently kicks me back to the game view" bug this
+// file's newest tests guard against.
+let authStateCallback = null
 vi.mock('../shared/authApi', () => ({
   getSession: vi.fn(),
-  onAuthStateChange: vi.fn(() => ({ unsubscribe: vi.fn() })),
+  onAuthStateChange: vi.fn((callback) => {
+    authStateCallback = callback
+    return { unsubscribe: vi.fn() }
+  }),
   fetchProfile: vi.fn(),
   signOut: vi.fn(),
 }))
@@ -25,6 +34,7 @@ beforeEach(() => {
   getSession.mockReset()
   fetchProfile.mockReset()
   signOut.mockReset()
+  authStateCallback = null
 })
 
 describe('AuthGate', () => {
@@ -86,5 +96,39 @@ describe('AuthGate', () => {
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     expect(signOut).toHaveBeenCalled()
+  })
+
+  it('does not reload the profile or re-show the loading screen for a background session refresh of the same user', async () => {
+    getSession.mockResolvedValue({ user: { id: 'user-1' }, access_token: 'token-a' })
+    fetchProfile.mockResolvedValue({ id: 'user-1', display_name: 'Vikram', is_owner: false })
+    render(<AuthGate>{({ profile }) => <div>Welcome, {profile.display_name}</div>}</AuthGate>)
+
+    expect(await screen.findByText('Welcome, Vikram')).toBeInTheDocument()
+    expect(fetchProfile).toHaveBeenCalledTimes(1)
+
+    // Simulate Supabase's own background refresh: same user, a new session
+    // object (fresh access_token), fired with no user action at all.
+    authStateCallback({ user: { id: 'user-1' }, access_token: 'token-b' })
+
+    // If this regressed, AuthGate would briefly render <LoadingScreen/>
+    // instead of `children` here — unmounting (and, in the real app,
+    // resetting the state of) whatever the child tree was showing.
+    expect(screen.getByText('Welcome, Vikram')).toBeInTheDocument()
+    expect(fetchProfile).toHaveBeenCalledTimes(1)
+  })
+
+  it('still reloads the profile when the session event is a genuinely different user', async () => {
+    getSession.mockResolvedValue({ user: { id: 'user-1' } })
+    fetchProfile
+      .mockResolvedValueOnce({ id: 'user-1', display_name: 'Vikram', is_owner: false })
+      .mockResolvedValueOnce({ id: 'user-2', display_name: 'Jenivev', is_owner: false })
+    render(<AuthGate>{({ profile }) => <div>Welcome, {profile.display_name}</div>}</AuthGate>)
+
+    expect(await screen.findByText('Welcome, Vikram')).toBeInTheDocument()
+
+    authStateCallback({ user: { id: 'user-2' } })
+
+    expect(await screen.findByText('Welcome, Jenivev')).toBeInTheDocument()
+    expect(fetchProfile).toHaveBeenCalledTimes(2)
   })
 })

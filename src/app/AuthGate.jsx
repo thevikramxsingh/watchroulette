@@ -49,9 +49,21 @@ export default function AuthGate({ children }) {
       setProfileError(null)
       return
     }
+    // Keyed on the user id, not the session object itself — Supabase fires
+    // onAuthStateChange for background events too (a proactive token
+    // refresh, or a tab regaining focus/visibility after being backgrounded,
+    // both routine on a phone), each handing back a *new* session object for
+    // the exact same signed-in user. Reacting to every one of those the same
+    // way as a real sign-in would re-run loadProfile, which flips
+    // profileLoading back to true and makes AuthGate render <LoadingScreen/>
+    // instead of `children` for a moment — unmounting the entire app under
+    // it, silently resetting whatever view/tab state it held (e.g. Manage
+    // Invites), with no user action involved at all. A real user id change
+    // (sign in, sign out, switch account) still reloads normally.
+    if (profile && profile.id === session.user.id) return
     loadProfile(session.user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session])
+  }, [session?.user?.id])
 
   function loadProfile(userId) {
     setProfileLoading(true)
