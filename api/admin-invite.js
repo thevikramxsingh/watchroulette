@@ -36,12 +36,94 @@ export default async function handler(req, res) {
     return
   }
 
-  const email = typeof body.email === 'string' ? body.email.trim() : ''
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   if (!looksLikeEmail(email)) {
     sendJson(res, 400, { error: 'A valid email is required' })
     return
   }
 
+  // Check our own profiles table BEFORE calling Supabase at all — the
+  // earlier version called inviteUserByEmail first and only checked
+  // afterward, which meant a real Supabase auth call fired even for
+  // outcomes (blocked-active) that were always going to be rejected.
+  // Looking up by email (lowercased on write below, and matched
+  // lowercased here) works before we have a user id, unlike the old
+  // by-id lookup which needed inviteUserByEmail's response first.
+  const { data: existingProfile, error: lookupError } = await admin
+    .from('profiles')
+    .select('id, revoked, display_name')
+    .eq('email', email)
+    .maybeSingle()
+
+  if (lookupError) {
+    sendJson(res, 502, { error: 'Could not check invite status. Try again.' })
+    return
+  }
+
+  const outcome = resolveExistingInvite(existingProfile)
+
+  if (outcome === 'blocked-active') {
+    sendJson(res, 409, { error: 'This person already has an account.' })
+    return
+  }
+
+  if (outcome === 'restore') {
+    // Revoke is "paused," not deleted — restoring means the same account,
+    // same history, un-banned. See resolveExistingInvite's comment and
+    // spec.md's Module 7 amendment for why this is never a fresh account.
+    const { error: unbanError } = await admin.auth.admin.updateUserById(existingProfile.id, {
+      ban_duration: 'none',
+    })
+    if (unbanError) {
+      sendJson(res, 502, { error: 'Could not restore access. Try again.' })
+      return
+    }
+
+    const { error: restoreError } = await admin
+      .from('profiles')
+      .update({ revoked: false })
+      .eq('id', existingProfile.id)
+
+    if (restoreError) {
+      sendJson(res, 502, { error: 'Could not restore access. Try again.' })
+      return
+    }
+
+    // If they were revoked before ever completing their one-time naming
+    // step, their original invite link may be long stale — send a fresh
+    // one. If they'd already been active, no email is needed at all: they
+    // just log in normally next time, same as anyone else.
+    if (!existingProfile.display_name) {
+      const { error: resendError } = await admin.auth.admin.inviteUserByEmail(email)
+      if (resendError) {
+        sendJson(res, 200, {
+          invited: true,
+          restored: true,
+          resent: false,
+          warning: 'Access restored, but the login link could not be resent — try Add again.',
+        })
+        return
+      }
+    }
+
+    sendJson(res, 200, { invited: true, restored: true, resent: !existingProfile.display_name })
+    return
+  }
+
+  if (outcome === 'resend') {
+    // inviteUserByEmail is idempotent for an unconfirmed user — resends the
+    // link rather than erroring.
+    const { error } = await admin.auth.admin.inviteUserByEmail(email)
+    if (error) {
+      sendJson(res, 502, { error: 'Could not resend the invite. Try again.' })
+      return
+    }
+    sendJson(res, 200, { invited: true, resent: true })
+    return
+  }
+
+  // outcome === 'invite' — no profiles row yet, so this is a genuinely new
+  // invite.
   const { data, error } = await admin.auth.admin.inviteUserByEmail(email)
   if (error || !data?.user) {
     // Supabase returns a real error (e.g. "already registered") rather
@@ -52,46 +134,8 @@ export default async function handler(req, res) {
     return
   }
 
-  // inviteUserByEmail above is idempotent for an unconfirmed user — a
-  // second "Add" for the same still-pending email lands here having just
-  // resent the invite link, not created anything new. Without this check,
-  // the insert below would collide with the profiles row the first attempt
-  // already created and throw a raw Postgres unique-violation straight at
-  // the owner (the actual bug this fixes). See resolveExistingInvite's own
-  // comment for the full reasoning.
-  const { data: existingProfile, error: lookupError } = await admin
-    .from('profiles')
-    .select('revoked, display_name')
-    .eq('id', data.user.id)
-    .maybeSingle()
-
-  if (lookupError) {
-    sendJson(res, 502, { error: 'Could not check invite status. Try again.' })
-    return
-  }
-
-  const outcome = resolveExistingInvite(existingProfile)
-
-  if (outcome === 'blocked-revoked') {
-    sendJson(res, 409, {
-      error: 'This person was revoked. Re-inviting them isn’t supported yet.',
-    })
-    return
-  }
-
-  if (outcome === 'blocked-active') {
-    sendJson(res, 409, { error: 'This person already has an account.' })
-    return
-  }
-
-  if (outcome === 'resend') {
-    sendJson(res, 200, { invited: true, resent: true, userId: data.user.id })
-    return
-  }
-
-  // outcome === 'invite' — no profiles row yet, so this is a genuinely new
-  // invite. Created here, at invite time, not left for the client to create
-  // on first login — see spec.md's self-review note on why: Manage Invites
+  // Created here, at invite time, not left for the client to create on
+  // first login — see spec.md's self-review note on why: Manage Invites
   // needs "invited, never logged in" to be a real, queryable status, which
   // means the row has to exist before that first login ever happens.
   const { error: profileError } = await admin
@@ -99,6 +143,10 @@ export default async function handler(req, res) {
     .insert({ id: data.user.id, email, display_name: null, is_owner: false, revoked: false })
 
   if (profileError) {
+    // Roll back the just-created auth user rather than leaving an orphan
+    // that can log in but has no profile row (which previously left
+    // AuthGate stuck on an infinite loading spinner with no way out).
+    await admin.auth.admin.deleteUser(data.user.id).catch(() => {})
     // Never leak raw Postgres text (e.g. constraint names) to the client —
     // it reveals schema details and isn't something an owner clicking
     // "Add" can act on.

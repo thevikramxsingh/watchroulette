@@ -34,19 +34,31 @@ export function looksLikeEmail(value) {
 }
 
 // Pure — decides what admin-invite.js should do when a profiles row already
-// exists for the invited email's auth user id. inviteUserByEmail is
-// idempotent: calling it again for an unconfirmed user resends their invite
-// link instead of erroring, so "Add" on an already-pending email is really a
-// resend request, not a fresh invite. Extracted and unit tested separately
-// (same "pure judgment call gets tested, thin network wrapper doesn't"
-// boundary as isAuthorizedOwner/inviteStatus elsewhere in this codebase) —
-// this is the piece that was missing and caused a raw unique-constraint
-// error to reach the Manage Invites UI on a second "Add" click.
+// exists for the invited email. Revoke is "paused, not deleted" (see
+// spec.md's Module 7 amendment): re-adding a revoked person always means
+// restore-in-place, same account/history, never a fresh one — a fresh
+// account would leave their old picks attributed to a name that then blocks
+// their own new signup, since display names are unique. Extracted and unit
+// tested separately (same "pure judgment call gets tested, thin network
+// wrapper doesn't" boundary as isAuthorizedOwner/inviteStatus elsewhere in
+// this codebase).
 export function resolveExistingInvite(existingProfile) {
   if (!existingProfile) return 'invite'
-  if (existingProfile.revoked) return 'blocked-revoked'
+  if (existingProfile.revoked) return 'restore'
   if (existingProfile.display_name) return 'blocked-active'
   return 'resend'
+}
+
+// Pure — decides whether revoking a given target profile would leave the
+// project with zero active owners, which would permanently lock everyone
+// out of Manage Invites with no way back in short of a live migration.
+// Applies identically whether the target is revoking themselves or being
+// revoked by another owner — "don't drop to zero," not "owners can never
+// leave." activeOwnerCount is the count of is_owner && !revoked rows,
+// including the target itself, queried by admin-revoke.js before this call.
+export function wouldRemoveLastOwner(targetProfile, activeOwnerCount) {
+  const targetIsActiveOwner = Boolean(targetProfile) && targetProfile.is_owner === true && targetProfile.revoked !== true
+  return targetIsActiveOwner && activeOwnerCount <= 1
 }
 
 // A service-role client — bypasses RLS entirely, so it must only ever be

@@ -4,6 +4,7 @@ import {
   isAuthorizedOwner,
   looksLikeEmail,
   resolveExistingInvite,
+  wouldRemoveLastOwner,
 } from './adminAuth'
 
 describe('extractBearerToken', () => {
@@ -85,13 +86,34 @@ describe('resolveExistingInvite', () => {
     )
   })
 
-  it('blocks re-inviting a revoked profile, even if they never logged in', () => {
-    expect(resolveExistingInvite({ revoked: true, display_name: null })).toBe('blocked-revoked')
+  it('restores a revoked profile who never logged in, rather than blocking', () => {
+    expect(resolveExistingInvite({ revoked: true, display_name: null })).toBe('restore')
   })
 
-  it('revoked wins over display_name if both are somehow set', () => {
-    expect(resolveExistingInvite({ revoked: true, display_name: 'Jenivev' })).toBe(
-      'blocked-revoked'
-    )
+  it('revoked wins over display_name — restores even a previously-active member', () => {
+    expect(resolveExistingInvite({ revoked: true, display_name: 'Jenivev' })).toBe('restore')
+  })
+})
+
+describe('wouldRemoveLastOwner', () => {
+  it('blocks revoking the only active owner', () => {
+    expect(wouldRemoveLastOwner({ is_owner: true, revoked: false }, 1)).toBe(true)
+  })
+
+  it('allows revoking an owner when another active owner remains', () => {
+    expect(wouldRemoveLastOwner({ is_owner: true, revoked: false }, 2)).toBe(false)
+  })
+
+  it('does not block revoking a non-owner regardless of count', () => {
+    expect(wouldRemoveLastOwner({ is_owner: false, revoked: false }, 1)).toBe(false)
+  })
+
+  it('does not block revoking an owner who is already revoked', () => {
+    expect(wouldRemoveLastOwner({ is_owner: true, revoked: true }, 1)).toBe(false)
+  })
+
+  it('treats a missing target profile as not blocking', () => {
+    expect(wouldRemoveLastOwner(null, 1)).toBe(false)
+    expect(wouldRemoveLastOwner(undefined, 0)).toBe(false)
   })
 })

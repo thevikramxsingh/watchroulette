@@ -78,6 +78,32 @@ describe('ManageInvites', () => {
     expect(await screen.findByText('Invite resent to new@example.com')).toBeInTheDocument()
   })
 
+  it('shows a restored message when Add targets a revoked account', async () => {
+    inviteMember.mockResolvedValue({ invited: true, restored: true, resent: false })
+    const user = userEvent.setup()
+    render(<ManageInvites accessToken="token-123" />)
+    await screen.findByText('vikram@example.com')
+
+    await user.type(screen.getByLabelText('Email to invite'), 'gone@example.com')
+    await user.click(screen.getByRole('button', { name: /add/i }))
+
+    expect(await screen.findByText('Access restored for gone@example.com')).toBeInTheDocument()
+  })
+
+  it('notes a fresh login link when restoring someone who never logged in before', async () => {
+    inviteMember.mockResolvedValue({ invited: true, restored: true, resent: true })
+    const user = userEvent.setup()
+    render(<ManageInvites accessToken="token-123" />)
+    await screen.findByText('vikram@example.com')
+
+    await user.type(screen.getByLabelText('Email to invite'), 'gone@example.com')
+    await user.click(screen.getByRole('button', { name: /add/i }))
+
+    expect(
+      await screen.findByText('Access restored for gone@example.com — a fresh login link was sent')
+    ).toBeInTheDocument()
+  })
+
   it('revokes an active member and refreshes the list', async () => {
     revokeMember.mockResolvedValue({ revoked: true })
     const user = userEvent.setup()
@@ -88,5 +114,20 @@ describe('ManageInvites', () => {
 
     expect(revokeMember).toHaveBeenCalledWith('token-123', 'active-1')
     expect(fetchAllProfiles).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('Revoked jenivev@example.com')).toBeInTheDocument()
+  })
+
+  it('shows a friendly error and re-enables the button when revoke fails', async () => {
+    revokeMember.mockRejectedValue(new Error("Can't revoke the last remaining owner — add another owner first."))
+    const user = userEvent.setup()
+    render(<ManageInvites accessToken="token-123" />)
+    await screen.findByText('jenivev@example.com')
+
+    await user.click(screen.getByLabelText('Revoke jenivev@example.com'))
+
+    expect(
+      await screen.findByText("Can't revoke the last remaining owner — add another owner first.")
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Revoke jenivev@example.com')).not.toBeDisabled()
   })
 })

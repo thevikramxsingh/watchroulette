@@ -93,6 +93,13 @@ create table profiles (
 -- someone would actually expect duplicate-name detection to work.
 create unique index profiles_display_name_unique_ci on profiles (lower(display_name));
 
+-- Case-insensitive for the same reason as display_name above — without
+-- this, Foo@gmail.com and foo@gmail.com could become two different tracked
+-- identities even though they're the same real account. Emails are
+-- lowercased before every write and every lookup in api/admin-invite.js;
+-- this index is the DB-level backstop, not the only thing normalizing them.
+create unique index profiles_email_unique_ci on profiles (lower(email));
+
 alter table profiles enable row level security;
 create policy "authenticated can read all profiles" on profiles
   for select using (auth.role() = 'authenticated');
@@ -220,6 +227,13 @@ create policy "authenticated members can log a completed round" on round_history
 -- profiles (Module 7) is a new table, same as round_history above — ran
 -- directly against the live project via its own CREATE TABLE block earlier
 -- in this file, not an alter.
+--
+-- profiles_email_unique_ci (post-launch data-integrity fix): profiles
+-- already existed live with 3 rows and no unique index on email at all when
+-- this was added. Safe to add directly (no case-insensitive collisions
+-- existed among those 3 real addresses), but worth a live ALTER, not a
+-- fresh CREATE TABLE, since the table already existed:
+-- create unique index profiles_email_unique_ci on profiles (lower(email));
 --
 -- movie_repo/game_lobby/round_history already existed live with the
 -- original "anyone can ..." policies, so what actually ran against the

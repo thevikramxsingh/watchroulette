@@ -20,9 +20,15 @@ export default function ManageInvites({ accessToken }) {
   const [status, setStatus] = useState('idle') // idle | inviting | error
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [revokingId, setRevokingId] = useState(null)
 
   async function refetch() {
-    setProfiles(await fetchAllProfiles())
+    try {
+      setProfiles(await fetchAllProfiles())
+    } catch {
+      setStatus('error')
+      setErrorMessage('Could not refresh the list — try reloading the page.')
+    }
   }
 
   useEffect(() => {
@@ -40,10 +46,19 @@ export default function ManageInvites({ accessToken }) {
       setEmail('')
       setStatus('idle')
       // Adding an email that's already invited-but-pending resends their
-      // link rather than erroring (see admin-invite.js) — surfaced here so
-      // clicking "Add" again after a delivery problem reads as a deliberate
-      // resend, not a no-op or a silent failure.
-      setSuccessMessage(result.resent ? `Invite resent to ${invitedEmail}` : `Invite sent to ${invitedEmail}`)
+      // link rather than erroring (see admin-invite.js); adding a revoked
+      // person's email restores their same account instead of blocking —
+      // both are surfaced here so "Add" reads as a deliberate, understood
+      // action, not a no-op or a silent failure.
+      if (result.restored) {
+        setSuccessMessage(
+          result.resent
+            ? `Access restored for ${invitedEmail} — a fresh login link was sent`
+            : `Access restored for ${invitedEmail}`
+        )
+      } else {
+        setSuccessMessage(result.resent ? `Invite resent to ${invitedEmail}` : `Invite sent to ${invitedEmail}`)
+      }
       await refetch()
     } catch (error) {
       setStatus('error')
@@ -52,8 +67,20 @@ export default function ManageInvites({ accessToken }) {
   }
 
   async function handleRevoke(profile) {
-    await revokeMember(accessToken, profile.id)
-    await refetch()
+    setRevokingId(profile.id)
+    setErrorMessage('')
+    setSuccessMessage('')
+    try {
+      await revokeMember(accessToken, profile.id)
+      setStatus('idle')
+      setSuccessMessage(`Revoked ${profile.email}`)
+      await refetch()
+    } catch (error) {
+      setStatus('error')
+      setErrorMessage(error.message)
+    } finally {
+      setRevokingId(null)
+    }
   }
 
   return (
@@ -105,9 +132,10 @@ export default function ManageInvites({ accessToken }) {
                     type="button"
                     aria-label={`Revoke ${profile.email}`}
                     onClick={() => handleRevoke(profile)}
-                    className="text-xs font-medium text-warmgray/60 transition duration-150 ease-out hover:text-theater-red"
+                    disabled={revokingId === profile.id}
+                    className="text-xs font-medium text-warmgray/60 transition duration-150 ease-out hover:text-theater-red disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    Revoke
+                    {revokingId === profile.id ? 'Revoking…' : 'Revoke'}
                   </button>
                 )}
               </div>
