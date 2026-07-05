@@ -88,6 +88,32 @@ describe('App', () => {
     render(<App />)
     expect(screen.queryByRole('button', { name: /manage invites/i })).not.toBeInTheDocument()
   })
+
+  it('mobile tab switcher shows only the Repo panel by default', () => {
+    render(<App />)
+
+    expect(screen.getByText('Repo panel stub — Vikram')).toBeVisible()
+    expect(screen.getByText('Decision engine stub — Vikram')).not.toBeVisible()
+    expect(screen.getByText('Arena stub — Vikram')).not.toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Repo' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('clicking a mobile tab switches which panel is visible', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('tab', { name: 'Wheel' }))
+
+    expect(screen.getByText('Decision engine stub — Vikram')).toBeVisible()
+    expect(screen.getByText('Repo panel stub — Vikram')).not.toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Wheel' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Repo' })).toHaveAttribute('aria-selected', 'false')
+
+    await user.click(screen.getByRole('tab', { name: 'Arena' }))
+
+    expect(screen.getByText('Arena stub — Vikram')).toBeVisible()
+    expect(screen.getByText('Decision engine stub — Vikram')).not.toBeVisible()
+  })
 })
 
 describe('App — as the owner', () => {

@@ -254,6 +254,16 @@ Everything that could be done without Vikram's own GitHub/Vercel accounts is don
 
 Before Module 7 existed as a designed module, two small fixes (a responsive layout wrap for the Repo/Decision Engine panels, and a hard "name required before doing anything" gate in `App.jsx`) were built and shipped directly to the real project files, without stopping to align with Vikram first. Called out directly, and correctly — both were reverted in full (confirmed via `git diff` showing zero changes against the last commit) before any further work happened. Recorded here rather than silently dropped, since it's a real part of what happened: the layout issue is still open (folded into whatever comes after Module 7, not yet re-addressed); the name-gate problem it was trying to solve is now fully superseded by Module 7 below, which solves it properly (a real account, not just a required text field) and was designed collaboratively before a line of it was written.
 
+### Mobile tab switcher (post-launch amendment, shipped 2026-07-05)
+
+Design in `spec.md`'s "Mobile layout — tab switcher" section, reached via a lowfi wireframe comparison after re-investigating the layout bug above surfaced a bigger real issue (long scroll on mobile, ~99% of actual usage) than the originally-diagnosed narrow-viewport overflow.
+
+- **Tests written** — **Done**: 2 new tests in `App.test.jsx` (defaults to the Repo tab with the others present but not visible; clicking a tab switches which panel is visible and updates `aria-selected`) using `toBeVisible()`/native `hidden`-attribute semantics, not class-name assertions — 7/7 in that file.
+- **Built** — **Done**: `App.jsx`'s `AppShell` gained a `mobileTab` state and a `role="tablist"` bar (`lg:hidden`) above the existing three-panel grid; each `<section>` is now also `role="tabpanel"` with `hidden={mobileTab !== id}` plus `lg:block` to unconditionally override it back to visible at the existing `lg` breakpoint — the desktop layout is byte-for-byte the same grid as before, just with two added attributes per section. `oxlint` (0 warnings) and `vite build` clean in an isolated scratch copy.
+- **Verified against checkpoint** — **Pending you**: `npm run dev`, narrow the window below `lg` (or use device toolbar), confirm the Repo/Wheel/Arena tab bar appears and only one panel shows at a time, confirm widening back past `lg` shows all three simultaneously with no tab bar, and confirm switching tabs doesn't interrupt an in-progress spin or Arena round (panels stay mounted, not remounted).
+
+Full suite 166/167 — the one failure is the same pre-existing real-timer flake (this run on `DecisionEngine.test.jsx`), confirmed unrelated, same as the last two entries above.
+
 ## Module 7 — Real accounts & access control
 
 | Stage | Status |

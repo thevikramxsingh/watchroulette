@@ -21,8 +21,24 @@ export default function App() {
 // as Module 5c's stats page (see StatsPage.jsx's own comment): this app has
 // deliberately never needed routing infrastructure for one or two extra
 // views.
+// Mobile tab labels — plain, matching the app's existing "verb-first and
+// plain" naming convention (Play/Spin/Watch, Stats, Manage Invites), not
+// cute or cinema-voiced. "Wheel" rather than "Decision Engine" since that's
+// this app's own internal/spec name, not something a user should ever see.
+const MOBILE_TABS = [
+  { id: 'repo', label: 'Repo' },
+  { id: 'wheel', label: 'Wheel' },
+  { id: 'arena', label: 'Arena' },
+]
+
 function AppShell({ profile, session }) {
   const [view, setView] = useState('game') // game | stats | invites
+  // Mobile-only: below the lg breakpoint, one of the three panels shows at a
+  // time instead of a long vertical scroll through all three (the original
+  // layout, which is still exactly what lg+ screens show — this state has
+  // no effect there at all). Defaults to Repo, matching its position as the
+  // first panel in the existing lg+ grid.
+  const [mobileTab, setMobileTab] = useState('repo')
 
   return (
     <Entrance>
@@ -68,16 +84,60 @@ function AppShell({ profile, session }) {
         ) : view === 'stats' ? (
           <StatsPage />
         ) : (
-          <main className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
-              <RepoPanel addedBy={profile.display_name} />
-            </section>
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
-              <DecisionEngine addedBy={profile.display_name} />
-            </section>
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
-              <ArenaGame addedBy={profile.display_name} />
-            </section>
+          <main className="flex-1 p-6">
+            {/* lg:hidden — at lg+ all three panels already show at once in
+                the grid below, so there's nothing to switch between. Below
+                lg, this replaces the old "scroll past two panels to reach
+                the one you want" layout. */}
+            <div role="tablist" className="mb-4 flex gap-2 lg:hidden">
+              {MOBILE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={mobileTab === tab.id}
+                  onClick={() => setMobileTab(tab.id)}
+                  className={`rounded-md px-3 py-2 text-sm font-medium transition duration-150 ease-out ${
+                    mobileTab === tab.id
+                      ? 'bg-gold text-gold-ink'
+                      : 'bg-card text-warmgray ring-1 ring-gold/20 hover:text-cream'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              {/* All three panels stay mounted at every screen size (same as
+                  before this change) — hidden below lg is the native `hidden`
+                  attribute, driven by mobileTab; lg:block unconditionally
+                  overrides it back to visible at lg+, same as the old
+                  always-three-panels layout. Keeping them mounted rather than
+                  conditionally rendering means switching tabs never
+                  interrupts their polling or resets their local state. */}
+              <section
+                role="tabpanel"
+                hidden={mobileTab !== 'repo'}
+                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+              >
+                <RepoPanel addedBy={profile.display_name} />
+              </section>
+              <section
+                role="tabpanel"
+                hidden={mobileTab !== 'wheel'}
+                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+              >
+                <DecisionEngine addedBy={profile.display_name} />
+              </section>
+              <section
+                role="tabpanel"
+                hidden={mobileTab !== 'arena'}
+                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+              >
+                <ArenaGame addedBy={profile.display_name} />
+              </section>
+            </div>
           </main>
         )}
       </div>

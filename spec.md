@@ -34,7 +34,19 @@ Needs to be always live — this doubles as a friend-group tool and an interview
 - **TMDB key**: never shipped to the browser. A Vercel serverless function proxies TMDB calls (`/api/tmdb-search`, `/api/tmdb-watch-providers`); the frontend calls our own API, not TMDB directly.
 - **Supabase uptime**: free tier auto-pauses after ~7 days with no activity. A Vercel Cron Job pings the database every couple of days to prevent that — no extra service to sign up for, stays inside Vercel.
 - **Access control**: open — anyone with the link reads/writes the same shared repo and lobby. No login, no room codes. Deliberate simplicity trade-off, not an oversight; revisit with room codes only if it's ever actually abused. **Superseded 2026-07-05** — see "Real accounts & access control (Module 7)" below. Not "actually abused" in the sense originally meant, but the user reviewing the live deploy correctly flagged that the promise itself ("no outsiders") wasn't true, and a real delete operation had shipped (Module 6) with no matching RLS policy at all — worth fixing before this app gets used as a portfolio demo, not after something goes wrong.
-- **Mobile**: responsive website only, opened via browser. No PWA/install step, no home-screen icon — not worth the extra config for a site that already works fine in a phone browser.
+- **Mobile**: responsive website only, opened via browser. No PWA/install step, no home-screen icon — not worth the extra config for a site that already works fine in a phone browser. **Amended 2026-07-05** — see "Mobile layout — tab switcher" below: "works fine" undersold how much of the actual usage (explicitly ~99% mobile) was a long vertical scroll through all three panels stacked, not a design flaw in the responsive breakpoint itself (the `grid-cols-1 lg:grid-cols-3` collapse was always correct) but a real UX gap once actually used for real.
+
+### Mobile layout — tab switcher (post-launch amendment)
+
+Raised while revisiting an earlier-diagnosed "zoom is broken" layout bug — investigating it surfaced the real, bigger issue underneath: true mobile widths already stack the three panels correctly (the responsive grid was never actually broken), but that means reaching the wheel or Arena requires scrolling past whichever panel loads first, on the exact usage pattern (mobile, most of the time) this app is actually built for. Compared via a lowfi wireframe against the alternative (keep the long scroll, just fix the narrower zoomed-in overflow bug that started the conversation) — the tab switcher was the clear pick once "mobile is ~99% of real usage" was made explicit rather than treated as a minor edge case.
+
+- **Only changes below the `lg` breakpoint** — the existing `lg:grid-cols-3` layout for wider screens is untouched; this is additive, not a replacement of the desktop design.
+- **Three tabs — Repo / Wheel / Arena**, plain labels (not cinema-voiced), matching this app's existing convention of keeping controls scannable even where copy elsewhere leans into theater vocabulary (see the Module 4 copy-pass note on why buttons stay plain). "Wheel," not "Decision Engine" — the latter is this app's own internal/spec name for the feature, never meant to be user-facing.
+- **Defaults to the Repo tab** — matches its position as the first panel in the existing desktop grid, least surprising choice available.
+- **All three panels stay mounted at every screen size, always** — switching tabs only toggles the native HTML `hidden` attribute on the other two, it never unmounts/remounts them. Matters because `DecisionEngine`/`ArenaGame` both poll shared state continuously; unmounting on every tab switch would interrupt that polling and could reset in-flight local state for no reason.
+- **Not a new component** — implemented as local state in `App.jsx`'s existing `AppShell`, same "plain in-page toggle, no routing" pattern already used for the Stats/Manage Invites views.
+
+Mobile layout amendment is now specified; nothing left open on this front before implementation.
 - **Rollback**: Vercel keeps every previous deploy and supports one-click instant rollback if a bad merge goes live.
 
 ## Folder structure
