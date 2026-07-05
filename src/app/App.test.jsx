@@ -89,30 +89,58 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /manage invites/i })).not.toBeInTheDocument()
   })
 
+  // Panel visibility below the lg breakpoint is driven by Tailwind's own
+  // hidden/block classes (see App.jsx's comment on why, after a native
+  // `hidden`-attribute approach passed every test here but failed in the
+  // real deployed build) — this project's test setup doesn't load real CSS
+  // into jsdom (no `css: true` in vite.config.js's test block), so
+  // `toBeVisible()` can't observe a class-driven show/hide at all. Asserting
+  // on `aria-hidden` instead — a real DOM attribute this component sets
+  // directly, not something that depends on a stylesheet actually being
+  // parsed — is what's actually testable here, and still a legitimate,
+  // accessibility-meaningful check, not a class-name assertion.
   it('mobile tab switcher shows only the Repo panel by default', () => {
     render(<App />)
 
-    expect(screen.getByText('Repo panel stub — Vikram')).toBeVisible()
-    expect(screen.getByText('Decision engine stub — Vikram')).not.toBeVisible()
-    expect(screen.getByText('Arena stub — Vikram')).not.toBeVisible()
+    expect(screen.getByText('Repo panel stub — Vikram').closest('[role="tabpanel"]')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(
+      screen.getByText('Decision engine stub — Vikram').closest('[role="tabpanel"]')
+    ).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByText('Arena stub — Vikram').closest('[role="tabpanel"]')).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    )
     expect(screen.getByRole('tab', { name: 'Repo' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('clicking a mobile tab switches which panel is visible', async () => {
+  it('clicking a mobile tab switches which panel is marked visible', async () => {
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(screen.getByRole('tab', { name: 'Wheel' }))
 
-    expect(screen.getByText('Decision engine stub — Vikram')).toBeVisible()
-    expect(screen.getByText('Repo panel stub — Vikram')).not.toBeVisible()
+    expect(
+      screen.getByText('Decision engine stub — Vikram').closest('[role="tabpanel"]')
+    ).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('Repo panel stub — Vikram').closest('[role="tabpanel"]')).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    )
     expect(screen.getByRole('tab', { name: 'Wheel' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Repo' })).toHaveAttribute('aria-selected', 'false')
 
     await user.click(screen.getByRole('tab', { name: 'Arena' }))
 
-    expect(screen.getByText('Arena stub — Vikram')).toBeVisible()
-    expect(screen.getByText('Decision engine stub — Vikram')).not.toBeVisible()
+    expect(screen.getByText('Arena stub — Vikram').closest('[role="tabpanel"]')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(
+      screen.getByText('Decision engine stub — Vikram').closest('[role="tabpanel"]')
+    ).toHaveAttribute('aria-hidden', 'true')
   })
 })
 

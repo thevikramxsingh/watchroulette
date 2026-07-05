@@ -276,6 +276,18 @@ Caught by Vikram testing the tab switcher live: the "Filter by genre" control ro
 
 **Verify yourself:** on the live site, zoom in/out and resize the window at a few different widths on both the Repo and Decision Engine panels — the Sort/genre controls should now drop to a second line instead of overlapping anything once they don't fit on one.
 
+### Tab-switcher panels invisible at desktop width — real regression, caught live (2026-07-05)
+
+Caught by Vikram testing the tab switcher after pushing to production: at a wide desktop window, only the currently-selected mobile tab's panel showed at all — the other two grid tracks were empty instead of showing all three panels as intended.
+
+**Root cause:** the original implementation mixed a native HTML `hidden` attribute (driven by `mobileTab` state) with a `lg:block` Tailwind class meant to unconditionally override it back to visible at the `lg` breakpoint. The reasoning — that Tailwind's author-origin CSS should beat the browser's own `[hidden]{display:none}` default rule — is correct in CSS theory, but did not hold up in the actual deployed build. It also was never caught by this project's own tests, for a specific reason worth remembering: `vite.config.js`'s test block has no `css: true`, meaning Vitest/jsdom never loads real compiled CSS at all — every test that "confirmed" this worked (via `toBeVisible()`) was only ever checking the native `hidden` DOM attribute directly, completely independent of whether any actual stylesheet override worked. The tests were internally consistent and green; they just weren't testing the thing that actually broke.
+
+**Fix:** dropped the native `hidden` attribute entirely. Visibility is now driven purely by Tailwind's own `hidden`/`block` classes plus `lg:block` — the exact same single-origin mechanism already working correctly elsewhere in this same file (the tab bar's `lg:hidden`, the grid's own `lg:grid-cols-3`). `aria-hidden` (a plain attribute with no UA display rule of its own to conflict with) now carries the accessibility signal instead. Verified this time by actually inspecting the compiled CSS output, not just reasoning about it: confirmed `.hidden{display:none}` and a media-gated `.lg\:block{display:block}` at `(width>=64rem)` (1024px, matching Tailwind's `lg`) both present in the real build.
+
+**Test changes:** switched from `toBeVisible()` (silently meaningless here, see above) to asserting `aria-hidden` directly — a real DOM attribute this component sets itself, not dependent on any stylesheet being parsed, and still a legitimate accessibility-based check rather than a class-name assertion. 7/7 in `App.test.jsx`, lint clean, full suite 166/167 (same pre-existing real-timer flake, confirmed unrelated).
+
+**Lesson worth keeping in mind for future responsive work in this app:** this test suite cannot verify real CSS rendering at all — only DOM structure/attributes. Anything relying on an actual stylesheet effect (as opposed to conditional rendering or attribute state) needs either a manual live check or a different verification method; a green test suite alone doesn't prove it.
+
 ## Module 7 — Real accounts & access control
 
 | Stage | Status |

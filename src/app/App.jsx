@@ -110,30 +110,49 @@ function AppShell({ profile, session }) {
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               {/* All three panels stay mounted at every screen size (same as
-                  before this change) — hidden below lg is the native `hidden`
-                  attribute, driven by mobileTab; lg:block unconditionally
-                  overrides it back to visible at lg+, same as the old
-                  always-three-panels layout. Keeping them mounted rather than
-                  conditionally rendering means switching tabs never
-                  interrupts their polling or resets their local state. */}
+                  before this change) — visibility below lg is Tailwind's own
+                  `hidden`/`block` classes (not the native `hidden`
+                  attribute), with `lg:block` unconditionally restoring
+                  visibility at lg+. A first version of this mixed the native
+                  attribute with a `lg:block` class override, reasoning that
+                  Tailwind's author-origin CSS should beat the browser's own
+                  `[hidden]{display:none}` default — that held up in every
+                  test (this project's test setup doesn't load real CSS into
+                  jsdom at all, so nothing here was ever actually verified
+                  against a real stylesheet) but did not hold up in the real
+                  deployed build: confirmed live, at a wide desktop window,
+                  only the tab-selected panel showed, with the other two grid
+                  tracks empty. Using only Tailwind's own classes for both
+                  directions avoids that cross-origin cascade question
+                  entirely — the same mechanism already correctly used by the
+                  tab bar's `lg:hidden` and this very grid's `lg:grid-cols-3`.
+                  `aria-hidden` (not the native `hidden` attribute) carries
+                  the accessibility signal instead, since it doesn't carry
+                  any UA-stylesheet display rule of its own to conflict with. */}
               <section
                 role="tabpanel"
-                hidden={mobileTab !== 'repo'}
-                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+                aria-hidden={mobileTab !== 'repo'}
+                className={`bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block ${
+                  mobileTab === 'repo' ? 'block' : 'hidden'
+                }`}
               >
                 <RepoPanel addedBy={profile.display_name} />
               </section>
               <section
                 role="tabpanel"
-                hidden={mobileTab !== 'wheel'}
-                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+                aria-hidden={mobileTab !== 'wheel'}
+                className={`bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block ${
+                  mobileTab === 'wheel' ? 'block' : 'hidden'
+                }`}
               >
                 <DecisionEngine addedBy={profile.display_name} />
               </section>
               <section
                 role="tabpanel"
-                hidden={mobileTab !== 'arena'}
-                className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block"
+                aria-hidden={mobileTab !== 'arena'}
+                className={`bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0 lg:block ${
+                  mobileTab === 'arena' ? 'block' : 'hidden'
+                }`}
               >
                 <ArenaGame addedBy={profile.display_name} />
               </section>
