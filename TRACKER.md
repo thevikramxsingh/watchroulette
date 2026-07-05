@@ -280,10 +280,15 @@ Before Module 7 existed as a designed module, two small fixes (a responsive layo
 - `admin-revoke.js` blocks an owner from revoking their own account — a footgun guard that wasn't explicitly speced, added because nothing else would prevent an owner from locking themselves out of Manage Invites with no way back in short of another live migration.
 
 **Still needs you (real account/production-infra reasons, same category as the original deployment steps):**
-1. Run `schema.sql`'s Module 7 changes against the live Supabase project (the new `profiles` table/trigger, plus the migration block at the bottom of the file for the already-live `movie_repo`/`game_lobby`/`round_history` policies).
-2. Add `SUPABASE_SERVICE_ROLE_KEY` to both local `.env` and Vercel's environment variables.
-3. Bootstrap the owner account (`thevikramxsingh@gmail.com`) per the README's "Accounts & access" section — a one-off, run-once step, not part of the app itself.
-4. Once live: confirm an uninvited email actually gets rejected, an invited one gets a working link, the display-name prompt enforces uniqueness for real, and a revoked member is actually locked out.
+1. ~~Run `schema.sql`'s Module 7 changes against the live Supabase project~~ — done, migration ran successfully.
+2. ~~Add `SUPABASE_SERVICE_ROLE_KEY` to both local `.env` and Vercel's environment variables~~ — done.
+3. ~~Bootstrap the owner account~~ — done; owner login confirmed working (display name, Manage Invites, owner-only nav item all correct).
+4. Live rollout in progress: inviting a second real user (`jenivevlobo7@gmail.com`) surfaced two problems, one fixed here, one still open — see below.
+
+**Post-launch fix — invite crash on resend (2026-07-05):**
+Re-clicking "Add" for an email that was already invited but hadn't logged in yet threw a raw `duplicate key value violates unique constraint "profiles_pkey"` straight into the Manage Invites UI. Root cause: `admin-invite.js` called Supabase's `inviteUserByEmail` (which resends the link for an unconfirmed user instead of erroring) and then unconditionally inserted into `profiles`, colliding with the row the first attempt already created. Fixed with a new pure `resolveExistingInvite()` judgment function (unit tested, 5 new cases in `adminAuth.test.js`) that branches on the existing profile: no row → fresh invite, pending row → resend (success, no reinsert, no more raw DB errors ever reach the client), active or revoked → a friendly blocked message. Also added success feedback ("Invite sent"/"Invite resent") to Manage Invites, which previously gave no positive confirmation at all. 5 new/changed tests, full suite (154 tests) + lint + build all clean in an isolated scratch copy. Committed as `f2cccc6`.
+
+**Still open — invite email never actually arrived.** Independent of the crash above: the invited person reported receiving nothing. Since `inviteUserByEmail` is confirmed to have fired (the profiles row exists, and the resend bug above proves it fires again on retry), this points at delivery rather than the app never attempting to send — needs checking on the Gmail-SMTP side (sender's Sent folder, recipient's spam folder, Supabase's own auth logs) before concluding what's actually wrong. Not yet diagnosed.
 
 ## Still-open cross-cutting topics (deliberately deferred, not forgotten)
 
