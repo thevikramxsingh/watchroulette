@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Cinematic redesign tokens (spec.md's "Visual design system", revised
+   2026-07-05 for true black + gold + theater-red, then again same day after
+   the first surface pass read as brown, not black). Defined once here so
+   every component reaches for the same names instead of scattering hex
+   values — see spec.md for the reasoning behind each value. */
+@theme {
+  --color-page: #0b0a09;
+  --color-card: #171412;
+  --color-gold: #d4a24c;
+  --color-gold-hover: #e0b468;
+  --color-gold-ink: #171412; /* text/icons sitting on a gold background */
+  --color-theater-red: #8c2f2f; /* one status meaning only: "already watched" */
+  --color-cream: #f3ece0; /* primary text */
+  --color-warmgray: #a69c8e; /* secondary/muted text */
+  --font-display: 'Fraunces', serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-page);
+  color: var(--color-cream);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
