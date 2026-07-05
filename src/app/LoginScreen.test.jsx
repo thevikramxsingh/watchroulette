@@ -38,4 +38,16 @@ describe('LoginScreen', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Email')).toBeInTheDocument()
   })
+
+  it('recovers from a thrown network failure instead of hanging on Sending…', async () => {
+    requestMagicLink.mockRejectedValue(new TypeError('Failed to fetch'))
+    const user = userEvent.setup()
+    render(<LoginScreen />)
+
+    await user.type(screen.getByLabelText('Email'), 'vikram@example.com')
+    await user.click(screen.getByRole('button', { name: /send me a link/i }))
+
+    expect(screen.getByText(/could not reach the server/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /send me a link/i })).toBeEnabled()
+  })
 })

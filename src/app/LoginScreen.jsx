@@ -17,15 +17,25 @@ export default function LoginScreen() {
     event.preventDefault()
     setStatus('sending')
 
-    const { error } = await requestMagicLink(email.trim())
+    // requestMagicLink normally resolves with { error } for Supabase-level
+    // failures (handled below via friendlyLoginError), but a genuine network
+    // failure — offline, DNS, the request never reaching Supabase at all —
+    // throws instead of resolving. Previously unhandled: the button stayed
+    // on "Sending…" forever with no way to recover short of a page reload.
+    try {
+      const { error } = await requestMagicLink(email.trim())
 
-    if (error) {
+      if (error) {
+        setStatus('error')
+        setErrorMessage(friendlyLoginError(error))
+        return
+      }
+
+      setStatus('sent')
+    } catch {
       setStatus('error')
-      setErrorMessage(friendlyLoginError(error))
-      return
+      setErrorMessage('Could not reach the server — check your connection and try again.')
     }
-
-    setStatus('sent')
   }
 
   if (status === 'sent') {

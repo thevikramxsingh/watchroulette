@@ -86,20 +86,32 @@ export function inviteStatus(profile) {
   return 'active'
 }
 
+// Two failure modes handled separately here, both previously collapsed into
+// one generic message: fetch itself throwing (offline, DNS failure, the
+// request never reaching a server at all — a TypeError, not an HTTP
+// response) vs. a server response that isn't JSON (a proxy/edge error page,
+// a cold-start timeout, anything upstream of this app's own handlers). The
+// status code is included in the second case so "Request failed" isn't the
+// only signal if this ever needs debugging from a user's bug report.
 async function callAdminEndpoint(path, accessToken, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    throw new Error(data.error || 'Request failed')
+  let res
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('Could not reach the server — check your connection and try again.')
   }
-  return data
+  const data = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(data?.error || `Request failed (${res.status})`)
+  }
+  return data ?? {}
 }
 
 export function inviteMember(accessToken, email) {

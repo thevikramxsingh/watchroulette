@@ -21,13 +21,20 @@ export default function ManageInvites({ accessToken }) {
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [revokingId, setRevokingId] = useState(null)
+  // Separate from status/errorMessage above on purpose: those two track the
+  // invite/revoke form's own action feedback, and a page in an unrelated
+  // "invite error" state shouldn't stay stuck there just because the list
+  // itself failed to refresh (or vice versa). A dedicated retry button here
+  // just re-runs the same refetch, rather than sending the user to reload
+  // the whole page.
+  const [listError, setListError] = useState('')
 
   async function refetch() {
     try {
       setProfiles(await fetchAllProfiles())
+      setListError('')
     } catch {
-      setStatus('error')
-      setErrorMessage('Could not refresh the list — try reloading the page.')
+      setListError('Could not load the invite list.')
     }
   }
 
@@ -112,6 +119,19 @@ export default function ManageInvites({ accessToken }) {
       {status === 'error' && <p className="text-sm text-red-500">{errorMessage}</p>}
       {status !== 'error' && successMessage && (
         <p className="text-sm text-warmgray">{successMessage}</p>
+      )}
+
+      {listError && (
+        <p className="flex items-center gap-2 text-sm text-red-500">
+          {listError}
+          <button
+            type="button"
+            onClick={refetch}
+            className="font-medium underline decoration-red-500/50 underline-offset-2 hover:text-cream"
+          >
+            Try again
+          </button>
+        </p>
       )}
 
       <ul className="flex flex-col gap-2">

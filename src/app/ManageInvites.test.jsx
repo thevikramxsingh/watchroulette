@@ -130,4 +130,18 @@ describe('ManageInvites', () => {
     ).toBeInTheDocument()
     expect(screen.getByLabelText('Revoke jenivev@example.com')).not.toBeDisabled()
   })
+
+  it('shows a Try again button when the list fails to load, which recovers it', async () => {
+    fetchAllProfiles.mockReset().mockRejectedValueOnce(new Error('network down')).mockResolvedValueOnce(baseProfiles)
+    const user = userEvent.setup()
+    render(<ManageInvites accessToken="token-123" />)
+
+    expect(await screen.findByText('Could not load the invite list.')).toBeInTheDocument()
+    expect(screen.queryByText('vikram@example.com')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /try again/i }))
+
+    expect(await screen.findByText('vikram@example.com')).toBeInTheDocument()
+    expect(screen.queryByText('Could not load the invite list.')).not.toBeInTheDocument()
+  })
 })
