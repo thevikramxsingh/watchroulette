@@ -53,7 +53,7 @@ describe('ManageInvites', () => {
   })
 
   it('invites a new email and refreshes the list', async () => {
-    inviteMember.mockResolvedValue({ invited: true })
+    inviteMember.mockResolvedValue({ invited: true, resent: false })
     const user = userEvent.setup()
     render(<ManageInvites accessToken="token-123" />)
     await screen.findByText('vikram@example.com')
@@ -63,6 +63,19 @@ describe('ManageInvites', () => {
 
     expect(inviteMember).toHaveBeenCalledWith('token-123', 'brandnew@example.com')
     expect(fetchAllProfiles).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText('Invite sent to brandnew@example.com')).toBeInTheDocument()
+  })
+
+  it('shows a resend message when Add targets an already-pending invite', async () => {
+    inviteMember.mockResolvedValue({ invited: true, resent: true })
+    const user = userEvent.setup()
+    render(<ManageInvites accessToken="token-123" />)
+    await screen.findByText('vikram@example.com')
+
+    await user.type(screen.getByLabelText('Email to invite'), 'new@example.com')
+    await user.click(screen.getByRole('button', { name: /add/i }))
+
+    expect(await screen.findByText('Invite resent to new@example.com')).toBeInTheDocument()
   })
 
   it('revokes an active member and refreshes the list', async () => {

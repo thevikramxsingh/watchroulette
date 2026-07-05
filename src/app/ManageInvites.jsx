@@ -19,6 +19,7 @@ export default function ManageInvites({ accessToken }) {
   const [email, setEmail] = useState('')
   const [status, setStatus] = useState('idle') // idle | inviting | error
   const [errorMessage, setErrorMessage] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
 
   async function refetch() {
     setProfiles(await fetchAllProfiles())
@@ -31,11 +32,18 @@ export default function ManageInvites({ accessToken }) {
   async function handleInvite(event) {
     event.preventDefault()
     setStatus('inviting')
+    setSuccessMessage('')
 
+    const invitedEmail = email.trim()
     try {
-      await inviteMember(accessToken, email.trim())
+      const result = await inviteMember(accessToken, invitedEmail)
       setEmail('')
       setStatus('idle')
+      // Adding an email that's already invited-but-pending resends their
+      // link rather than erroring (see admin-invite.js) — surfaced here so
+      // clicking "Add" again after a delivery problem reads as a deliberate
+      // resend, not a no-op or a silent failure.
+      setSuccessMessage(result.resent ? `Invite resent to ${invitedEmail}` : `Invite sent to ${invitedEmail}`)
       await refetch()
     } catch (error) {
       setStatus('error')
@@ -75,6 +83,9 @@ export default function ManageInvites({ accessToken }) {
       </form>
 
       {status === 'error' && <p className="text-sm text-red-500">{errorMessage}</p>}
+      {status !== 'error' && successMessage && (
+        <p className="text-sm text-warmgray">{successMessage}</p>
+      )}
 
       <ul className="flex flex-col gap-2">
         {profiles.map((profile) => {

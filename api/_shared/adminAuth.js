@@ -33,6 +33,22 @@ export function looksLikeEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
+// Pure — decides what admin-invite.js should do when a profiles row already
+// exists for the invited email's auth user id. inviteUserByEmail is
+// idempotent: calling it again for an unconfirmed user resends their invite
+// link instead of erroring, so "Add" on an already-pending email is really a
+// resend request, not a fresh invite. Extracted and unit tested separately
+// (same "pure judgment call gets tested, thin network wrapper doesn't"
+// boundary as isAuthorizedOwner/inviteStatus elsewhere in this codebase) —
+// this is the piece that was missing and caused a raw unique-constraint
+// error to reach the Manage Invites UI on a second "Add" click.
+export function resolveExistingInvite(existingProfile) {
+  if (!existingProfile) return 'invite'
+  if (existingProfile.revoked) return 'blocked-revoked'
+  if (existingProfile.display_name) return 'blocked-active'
+  return 'resend'
+}
+
 // A service-role client — bypasses RLS entirely, so it must only ever be
 // constructed inside a server-only file (api/*.js), never anything that
 // ships to the browser. Reads the URL from the same VITE_-prefixed var the

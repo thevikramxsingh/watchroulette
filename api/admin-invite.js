@@ -11,6 +11,7 @@ import {
   looksLikeEmail,
   readJsonBody,
   requireOwner,
+  resolveExistingInvite,
 } from './_shared/adminAuth.js'
 
 function sendJson(res, status, body) {
@@ -51,19 +52,59 @@ export default async function handler(req, res) {
     return
   }
 
-  // The profiles row is created here, at invite time, not left for the
-  // client to create on first login — see spec.md's self-review note on
-  // why: Manage Invites needs "invited, never logged in" to be a real,
-  // queryable status, which means the row has to exist before that first
-  // login ever happens.
+  // inviteUserByEmail above is idempotent for an unconfirmed user — a
+  // second "Add" for the same still-pending email lands here having just
+  // resent the invite link, not created anything new. Without this check,
+  // the insert below would collide with the profiles row the first attempt
+  // already created and throw a raw Postgres unique-violation straight at
+  // the owner (the actual bug this fixes). See resolveExistingInvite's own
+  // comment for the full reasoning.
+  const { data: existingProfile, error: lookupError } = await admin
+    .from('profiles')
+    .select('revoked, display_name')
+    .eq('id', data.user.id)
+    .maybeSingle()
+
+  if (lookupError) {
+    sendJson(res, 502, { error: 'Could not check invite status. Try again.' })
+    return
+  }
+
+  const outcome = resolveExistingInvite(existingProfile)
+
+  if (outcome === 'blocked-revoked') {
+    sendJson(res, 409, {
+      error: 'This person was revoked. Re-inviting them isn’t supported yet.',
+    })
+    return
+  }
+
+  if (outcome === 'blocked-active') {
+    sendJson(res, 409, { error: 'This person already has an account.' })
+    return
+  }
+
+  if (outcome === 'resend') {
+    sendJson(res, 200, { invited: true, resent: true, userId: data.user.id })
+    return
+  }
+
+  // outcome === 'invite' — no profiles row yet, so this is a genuinely new
+  // invite. Created here, at invite time, not left for the client to create
+  // on first login — see spec.md's self-review note on why: Manage Invites
+  // needs "invited, never logged in" to be a real, queryable status, which
+  // means the row has to exist before that first login ever happens.
   const { error: profileError } = await admin
     .from('profiles')
     .insert({ id: data.user.id, email, display_name: null, is_owner: false, revoked: false })
 
   if (profileError) {
-    sendJson(res, 502, { error: profileError.message })
+    // Never leak raw Postgres text (e.g. constraint names) to the client —
+    // it reveals schema details and isn't something an owner clicking
+    // "Add" can act on.
+    sendJson(res, 502, { error: 'Could not save the invite. Try again.' })
     return
   }
 
-  sendJson(res, 200, { invited: true, userId: data.user.id })
+  sendJson(res, 200, { invited: true, resent: false, userId: data.user.id })
 }

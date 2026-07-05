@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { extractBearerToken, isAuthorizedOwner, looksLikeEmail } from './adminAuth'
+import {
+  extractBearerToken,
+  isAuthorizedOwner,
+  looksLikeEmail,
+  resolveExistingInvite,
+} from './adminAuth'
 
 describe('extractBearerToken', () => {
   it('extracts the token from a well-formed header', () => {
@@ -61,5 +66,32 @@ describe('looksLikeEmail', () => {
     expect(looksLikeEmail('')).toBe(false)
     expect(looksLikeEmail(undefined)).toBe(false)
     expect(looksLikeEmail(42)).toBe(false)
+  })
+})
+
+describe('resolveExistingInvite', () => {
+  it('treats no existing profile as a genuinely new invite', () => {
+    expect(resolveExistingInvite(null)).toBe('invite')
+    expect(resolveExistingInvite(undefined)).toBe('invite')
+  })
+
+  it('treats a pending (never logged in, not revoked) profile as a resend', () => {
+    expect(resolveExistingInvite({ revoked: false, display_name: null })).toBe('resend')
+  })
+
+  it('blocks re-inviting someone who already has an account', () => {
+    expect(resolveExistingInvite({ revoked: false, display_name: 'Jenivev' })).toBe(
+      'blocked-active'
+    )
+  })
+
+  it('blocks re-inviting a revoked profile, even if they never logged in', () => {
+    expect(resolveExistingInvite({ revoked: true, display_name: null })).toBe('blocked-revoked')
+  })
+
+  it('revoked wins over display_name if both are somehow set', () => {
+    expect(resolveExistingInvite({ revoked: true, display_name: 'Jenivev' })).toBe(
+      'blocked-revoked'
+    )
   })
 })
