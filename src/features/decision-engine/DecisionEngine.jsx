@@ -135,7 +135,10 @@ export default function DecisionEngine({ addedBy, pollIntervalMs = 4000, animati
 
       <SpinWheel pool={pool} spinning={spinning} targetMovie={targetMovie} animationMs={animationMs} />
 
-      <div className="flex items-center gap-2">
+      {/* flex-wrap for the same reason as RepoPanel's identical row — a
+          <select> won't shrink below its content width by default, so an
+          unwrapped row just overflows instead of dropping to a new line. */}
+      <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="genre-filter" className="text-xs text-warmgray">
           Filter by genre
         </label>

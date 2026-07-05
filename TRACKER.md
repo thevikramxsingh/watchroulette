@@ -264,6 +264,18 @@ Design in `spec.md`'s "Mobile layout — tab switcher" section, reached via a lo
 
 Full suite 166/167 — the one failure is the same pre-existing real-timer flake (this run on `DecisionEngine.test.jsx`), confirmed unrelated, same as the last two entries above.
 
+### Genre-filter row overflow fix (2026-07-05, same day)
+
+Caught by Vikram testing the tab switcher live: the "Filter by genre" control row (and, in Repo's case, the Sort control next to it) still visually overlapped/got buried at certain widths — the actual root cause of the original "zoom is broken" report from earlier tonight, which the tab-switcher work above never touched (that fixed which *panel* shows on mobile, not the layout *inside* each panel).
+
+**Root cause:** both `RepoPanel.jsx` and `DecisionEngine.jsx` had their control row as a plain `flex items-center gap-N` div with no `flex-wrap`. A `<select>` has a browser-enforced minimum content width, and flex items don't shrink below that by default — so when the row didn't fit (narrow viewport, or zoomed in — functionally the same reduction in available CSS pixels), it simply overflowed its container instead of wrapping to a new line, visually colliding with whatever sat below it. Same underlying gap already named for the tab-switcher work: these rows were built and eyeballed once at a normal desktop width, never deliberately resized/zoomed during development.
+
+**Fix:** added `flex-wrap` to both rows; `RepoPanel.jsx`'s two controls (Sort, Filter by genre) each got wrapped in their own `flex items-center gap-2` sub-group so a wrap can never separate a label from its own `<select>`. Pure layout change, no behavior/logic touched.
+
+**Verification:** `RepoPanel.test.jsx` (10/10) and `DecisionEngine.test.jsx` (10/10) both pass unchanged — the added wrapper divs don't affect role/label-based queries. `oxlint` clean, `vite build` clean. Full suite 166/167, same pre-existing real-timer flake as every entry above, confirmed unrelated.
+
+**Verify yourself:** on the live site, zoom in/out and resize the window at a few different widths on both the Repo and Decision Engine panels — the Sort/genre controls should now drop to a second line instead of overlapping anything once they don't fit on one.
+
 ## Module 7 — Real accounts & access control
 
 | Stage | Status |

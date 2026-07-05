@@ -191,38 +191,48 @@ export default function RepoPanel({ addedBy, debounceMs = 400, pollIntervalMs = 
       </div>
 
       {movieList.length > 0 && (
-        <div className="flex items-center gap-3">
-          <label htmlFor="repo-sort" className="text-xs text-warmgray">
-            Sort
-          </label>
-          <select
-            id="repo-sort"
-            aria-label="Sort by"
-            value={sortMode}
-            onChange={(event) => setSortMode(event.target.value)}
-            className="rounded-md bg-card px-2 py-1 text-sm text-cream outline-none ring-1 ring-gold/20 transition duration-150 ease-out focus:ring-2 focus:ring-gold"
-          >
-            <option value="date">Recently added</option>
-            <option value="contributor">Group by who added it</option>
-          </select>
+        // flex-wrap — without it, this row simply overflows its container
+        // (rather than shrinking or dropping to a new line) the moment it
+        // doesn't fit: a <select> has a browser-enforced minimum content
+        // width, and flex items don't shrink below that by default. Each
+        // label+select pair gets its own flex group so a wrap never
+        // separates a label from its own control.
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="repo-sort" className="text-xs text-warmgray">
+              Sort
+            </label>
+            <select
+              id="repo-sort"
+              aria-label="Sort by"
+              value={sortMode}
+              onChange={(event) => setSortMode(event.target.value)}
+              className="rounded-md bg-card px-2 py-1 text-sm text-cream outline-none ring-1 ring-gold/20 transition duration-150 ease-out focus:ring-2 focus:ring-gold"
+            >
+              <option value="date">Recently added</option>
+              <option value="contributor">Group by who added it</option>
+            </select>
+          </div>
 
-          <label htmlFor="repo-genre-filter" className="text-xs text-warmgray">
-            Filter by genre
-          </label>
-          <select
-            id="repo-genre-filter"
-            aria-label="Filter by genre"
-            value={genreFilter}
-            onChange={(event) => setGenreFilter(event.target.value)}
-            className="rounded-md bg-card px-2 py-1 text-sm text-cream outline-none ring-1 ring-gold/20 transition duration-150 ease-out focus:ring-2 focus:ring-gold"
-          >
-            <option value="all">All genres</option>
-            {genres.map((genre) => (
-              <option key={genre} value={genre}>
-                {genre}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <label htmlFor="repo-genre-filter" className="text-xs text-warmgray">
+              Filter by genre
+            </label>
+            <select
+              id="repo-genre-filter"
+              aria-label="Filter by genre"
+              value={genreFilter}
+              onChange={(event) => setGenreFilter(event.target.value)}
+              className="rounded-md bg-card px-2 py-1 text-sm text-cream outline-none ring-1 ring-gold/20 transition duration-150 ease-out focus:ring-2 focus:ring-gold"
+            >
+              <option value="all">All genres</option>
+              {genres.map((genre) => (
+                <option key={genre} value={genre}>
+                  {genre}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
