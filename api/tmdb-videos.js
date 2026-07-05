@@ -3,6 +3,11 @@
 // runs identically as a Vercel function or as Vite dev middleware via
 // tmdbProxyPlugin.js). Called once from repoApi.addMovie, at add-time, not
 // on every render or search keystroke — see spec.md's "Module 5a" section.
+//
+// Module 7: now requires a valid Supabase session, same reasoning as
+// tmdb-search.js's own comment on why this changed.
+import { createAdminClient, requireSession } from './_shared/adminAuth.js'
+
 const TMDB_BASE = 'https://api.themoviedb.org/3'
 
 // Pure — picks the single best trailer out of TMDB's raw video list, if any.
@@ -38,6 +43,12 @@ function sendJson(res, status, body) {
 }
 
 export default async function handler(req, res) {
+  const sessionUserId = await requireSession(req, createAdminClient())
+  if (!sessionUserId) {
+    sendJson(res, 401, { error: 'Login required' })
+    return
+  }
+
   // Same req.url-based parsing as tmdb-search.js, for the same reason:
   // req.query only exists on Vercel's Node runtime, not on Vite's dev
   // middleware's plain http.IncomingMessage.

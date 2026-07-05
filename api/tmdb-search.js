@@ -7,6 +7,14 @@
 // serverless function once deployed, and mounted as Vite dev middleware
 // locally (see src/shared/tmdbProxyPlugin.js) — no Vercel CLI or account
 // needed just to develop Module 1.
+//
+// Module 7: this used to be reachable by anyone, logged in or not — an open
+// side door that spent TMDB quota and Vercel function time regardless of
+// whether the caller ever went through the app's login screen. Now requires
+// a valid Supabase session (see requireSession below), matching the rest of
+// the app's "login required for everything" rule.
+import { createAdminClient, requireSession } from './_shared/adminAuth.js'
+
 const TMDB_BASE = 'https://api.themoviedb.org/3'
 
 // TMDB's movie genre list is fixed and rarely changes — hardcoding it here
@@ -41,6 +49,12 @@ function sendJson(res, status, body) {
 }
 
 export default async function handler(req, res) {
+  const sessionUserId = await requireSession(req, createAdminClient())
+  if (!sessionUserId) {
+    sendJson(res, 401, { error: 'Login required' })
+    return
+  }
+
   // Parsed straight off req.url rather than req.query — req.query only
   // exists on Vercel's Node runtime, not on the plain http.IncomingMessage
   // Vite's dev middleware hands us. Reading the querystring this way works

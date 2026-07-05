@@ -1,6 +1,8 @@
 import { config as loadDotenv } from 'dotenv'
 import tmdbSearchHandler from '../../api/tmdb-search.js'
 import tmdbVideosHandler from '../../api/tmdb-videos.js'
+import adminInviteHandler from '../../api/admin-invite.js'
+import adminRevokeHandler from '../../api/admin-revoke.js'
 
 // api/*.js only run as real serverless functions once deployed to Vercel.
 // This Vite plugin mounts the exact same handlers as dev middleware on the
@@ -24,6 +26,16 @@ export function tmdbProxyPlugin() {
       // tmdb-search above, one middleware per api/*.js file.
       server.middlewares.use('/api/tmdb-videos', (req, res) => {
         tmdbVideosHandler(req, res)
+      })
+      // Added for Module 7 (real accounts) — same mount pattern. Both of
+      // these are POSTs with a JSON body, which raw Node middleware (no
+      // framework body-parser) handles the same way in dev as in
+      // production; see api/_shared/adminAuth.js's readJsonBody.
+      server.middlewares.use('/api/admin-invite', (req, res) => {
+        adminInviteHandler(req, res)
+      })
+      server.middlewares.use('/api/admin-revoke', (req, res) => {
+        adminRevokeHandler(req, res)
       })
     },
   }

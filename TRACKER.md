@@ -250,6 +250,41 @@ Everything that could be done without Vikram's own GitHub/Vercel accounts is don
 4. Deploy. Confirm the live URL loads, a search actually returns TMDB results (proves the proxy + env var made it through), and a spin/reveal/veto loop works end-to-end against the real Supabase project.
 5. Optional, once you're comfortable it's stable: `curl https://<your-app>.vercel.app/api/keep-alive` once by hand to confirm it returns `{"ok":true,...}` rather than waiting up to 2 days for the cron's first real run.
 
+## Layout overflow + name-gate — attempted, reverted, superseded (2026-07-05)
+
+Before Module 7 existed as a designed module, two small fixes (a responsive layout wrap for the Repo/Decision Engine panels, and a hard "name required before doing anything" gate in `App.jsx`) were built and shipped directly to the real project files, without stopping to align with Vikram first. Called out directly, and correctly — both were reverted in full (confirmed via `git diff` showing zero changes against the last commit) before any further work happened. Recorded here rather than silently dropped, since it's a real part of what happened: the layout issue is still open (folded into whatever comes after Module 7, not yet re-addressed); the name-gate problem it was trying to solve is now fully superseded by Module 7 below, which solves it properly (a real account, not just a required text field) and was designed collaboratively before a line of it was written.
+
+## Module 7 — Real accounts & access control
+
+| Stage | Status |
+|---|---|
+| Design | Done — `spec.md` "Real accounts & access control (Module 7)", reached through a full `/grill-me` session (ten resolved decision branches, each with its own recommended answer) after the user flagged three problems at once while reviewing the live deploy: no real identity gate, a layout bug (tracked separately above), and open access with a silently-broken delete policy underneath it. |
+| Tests written | **Done** — 13 new unit tests (`api/_shared/adminAuth.test.js`: `extractBearerToken`, `isAuthorizedOwner`, `looksLikeEmail`) + 10 new unit tests (`src/shared/authApi.test.js`: `isDuplicateNameError`, `inviteStatus`, `friendlyLoginError`) + component tests across five new files (`LoginScreen.test.jsx` 2, `DisplayNamePrompt.test.jsx` 3, `AuthGate.test.jsx` 3, `ManageInvites.test.jsx` 5) + `App.test.jsx` fully rewritten (5 tests, now driven by a mocked `AuthGate` render-prop instead of a typed-name `localStorage` field). 36 new/rewritten tests, all passing; full existing suite (RepoPanel, DecisionEngine, ArenaGame, Entrance, Stats, MovieCard, tmdb-videos) re-run and confirmed still green with no regressions. |
+| Built | **Done** — see the breakdown below. `npx oxlint src api` (0 warnings) and `vite build` both clean in an isolated scratch copy. Schema change: new `profiles` table + a guard trigger + rewritten RLS across `movie_repo`/`game_lobby`/`round_history` (all in `schema.sql`, migration statements included for the already-live tables — not yet run against the real project, see below). |
+| Verified against checkpoint | **Not yet possible** — this module can't be manually checked out end-to-end until the schema migration runs live and the owner account is bootstrapped (both need Vikram's own Supabase access, same reasoning as the original deployment's account-linking steps). See "Still needs you" below. |
+
+**What shipped, by piece:**
+- **`profiles` table** (`schema.sql`) — `id`, `email`, `display_name`, `is_owner`, `revoked`. A `before update` trigger (`reject_admin_column_changes`) blocks any client-initiated change to `is_owner`/`revoked` — caught during the spec's own self-review as a real self-promotion hole, not found during implementation.
+- **RLS rewrite** — every policy on `movie_repo`/`game_lobby`/`round_history` now requires `auth.role() = 'authenticated'`; a new `movie_repo` delete policy fixes the Module 6 Remove button, which has been silently non-functional in production since it shipped (no delete policy ever existed for it).
+- **`api/admin-invite.js` / `api/admin-revoke.js`** (new, owner-only, service-role key) — real enforcement via `inviteUserByEmail` (creates the account and sends the first login link in one step) and `updateUserById` with a ban (not a plain app-level flag). Shared verification logic lives in `api/_shared/adminAuth.js`, excluded from becoming its own Vercel route by the leading underscore.
+- **`api/tmdb-search.js` / `api/tmdb-videos.js`** — now require a valid session (401 otherwise); closes what was previously an open side door spending TMDB/Vercel quota with no login at all.
+- **`api/keep-alive.js`** — switched from the anon key to `SUPABASE_SERVICE_ROLE_KEY`, since its ping would otherwise start failing RLS once `game_lobby`'s select policy requires an authenticated session it has no way to present.
+- **`AuthGate.jsx`** (new) — the outermost gate: loading → `LoginScreen` (no session) → `DisplayNamePrompt` (session, no name yet) → renders the app via a children render-prop once both resolve. Replaces the old typed-name model in `App.jsx` entirely.
+- **`LoginScreen.jsx`** (new) — email input, magic link via `signInWithOtp({ shouldCreateUser: false })`; an uninvited email's real Supabase error ("Signups not allowed for otp") gets rewritten to plain language via `friendlyLoginError`.
+- **`DisplayNamePrompt.jsx`** (new) — one-time name prompt; a duplicate name surfaces the DB's unique-constraint violation (`23505`) as "That name's already in use — try another," not a raw Postgres error.
+- **`ManageInvites.jsx`** (new, owner-only nav item in `App.jsx`) — lists every profile with a derived status (`Owner`/`Active`/`Invited — hasn't logged in yet`/`Revoked`), an Add-by-email form, and a Revoke control hidden for the owner's own row and for anyone already revoked.
+- **`repoApi.js`** — `searchTmdb`/`fetchTrailerKey` now attach the current session's token to both proxy calls, matching the new requirement on the server side.
+
+**Amended mid-build, not just at design time:**
+- `profiles` gained an `email` column that wasn't in the original spec — caught while actually building the Manage Invites screen: `auth.users.email` isn't reachable from client code at all, so without a copy there'd be nothing to show per invited person except a bare UUID. Written once, at invite time, by `api/admin-invite.js`.
+- `admin-revoke.js` blocks an owner from revoking their own account — a footgun guard that wasn't explicitly speced, added because nothing else would prevent an owner from locking themselves out of Manage Invites with no way back in short of another live migration.
+
+**Still needs you (real account/production-infra reasons, same category as the original deployment steps):**
+1. Run `schema.sql`'s Module 7 changes against the live Supabase project (the new `profiles` table/trigger, plus the migration block at the bottom of the file for the already-live `movie_repo`/`game_lobby`/`round_history` policies).
+2. Add `SUPABASE_SERVICE_ROLE_KEY` to both local `.env` and Vercel's environment variables.
+3. Bootstrap the owner account (`thevikramxsingh@gmail.com`) per the README's "Accounts & access" section — a one-off, run-once step, not part of the app itself.
+4. Once live: confirm an uninvited email actually gets rejected, an invited one gets a working link, the display-name prompt enforces uniqueness for real, and a revoked member is actually locked out.
+
 ## Still-open cross-cutting topics (deliberately deferred, not forgotten)
 
 - [x] Testing strategy — decided, see below

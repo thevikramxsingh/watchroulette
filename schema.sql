@@ -63,28 +63,102 @@ create table round_history (
 -- night means this would take years to become a real performance question
 -- (see spec.md's Module 5c).
 
+-- profiles (Module 7): the real-account identity layer, one row per
+-- Supabase Auth user. display_name is set once by the person themselves
+-- (the app's one-time "what should we call you" prompt); is_owner/revoked
+-- are administrative flags only ever touched by this app's own server-side
+-- admin endpoints (api/admin-invite.js, api/admin-revoke.js), never by a
+-- client request — see the guard trigger below. revoked mirrors the real
+-- Supabase-level ban api/admin-revoke.js sets; it enforces nothing on its
+-- own, it only exists so the Manage Invites screen has something to query.
+--
+-- email is a deliberate duplication of auth.users.email, not the source of
+-- truth for anything auth-related (Supabase's own auth.users row is that,
+-- and always will be) — caught while actually building the Manage Invites
+-- screen: auth.users isn't reachable from client code at all, even under
+-- RLS, so without a copy here the invite list would have nothing to
+-- display per person except a bare UUID. Written once by
+-- api/admin-invite.js at invite time (it already has the email in hand);
+-- never updated afterward, so it can't drift from what the account was
+-- invited under.
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  display_name text,
+  is_owner boolean not null default false,
+  revoked boolean not null default false,
+  created_at timestamp with time zone default now()
+);
+-- Case-insensitive so "Vikram" and "vikram" can't both exist — matches how
+-- someone would actually expect duplicate-name detection to work.
+create unique index profiles_display_name_unique_ci on profiles (lower(display_name));
+
+alter table profiles enable row level security;
+create policy "authenticated can read all profiles" on profiles
+  for select using (auth.role() = 'authenticated');
+create policy "a user can set their own profile" on profiles
+  for update using (auth.uid() = id);
+-- No insert policy: rows only ever get created server-side (by
+-- api/admin-invite.js at invite time, or the one-off owner bootstrap
+-- script), both running with the service role, which bypasses RLS
+-- entirely — there's no client-facing path that's meant to insert here.
+
+-- Closes a gap caught in spec self-review: the update policy above only
+-- restricts *which row* someone can update, not *which columns* — without
+-- this trigger, any logged-in member could set is_owner/revoked on their
+-- own row via a normal update. The service-role check is what still lets
+-- api/admin-invite.js/api/admin-revoke.js themselves legitimately set them.
+create or replace function reject_admin_column_changes() returns trigger as $$
+begin
+  if auth.role() = 'service_role' then
+    return new;
+  end if;
+
+  if new.is_owner is distinct from old.is_owner
+     or new.revoked is distinct from old.revoked then
+    raise exception 'is_owner/revoked cannot be changed by a client update';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger profiles_guard_admin_columns
+  before update on profiles
+  for each row execute function reject_admin_column_changes();
+
 insert into game_lobby (id) values ('current_session');
 
 alter table movie_repo enable row level security;
 alter table game_lobby enable row level security;
 alter table round_history enable row level security;
 
-create policy "anyone can read movies" on movie_repo
-  for select using (true);
-create policy "anyone can add movies" on movie_repo
-  for insert with check (true);
-create policy "anyone can mark movies watched" on movie_repo
-  for update using (true);
+-- Module 7: every policy below requires an authenticated session — this
+-- replaces the original "anyone can ..." open policies (see the migration
+-- block at the end of this file for what actually ran against the already-
+-- live project, since these tables existed long before accounts did).
+create policy "authenticated members can read movies" on movie_repo
+  for select using (auth.role() = 'authenticated');
+create policy "authenticated members can add movies" on movie_repo
+  for insert with check (auth.role() = 'authenticated');
+create policy "authenticated members can update movies" on movie_repo
+  for update using (auth.role() = 'authenticated');
+-- New in Module 7 — repoApi.removeMovie() has existed since Module 6 with
+-- no matching delete policy at all, so it's been silently failing in
+-- production (RLS denies by default with no policy present) since it
+-- shipped. This is the fix.
+create policy "authenticated members can delete movies" on movie_repo
+  for delete using (auth.role() = 'authenticated');
 
-create policy "anyone can read lobby state" on game_lobby
-  for select using (true);
-create policy "anyone can update lobby state" on game_lobby
-  for update using (true);
+create policy "authenticated members can read lobby state" on game_lobby
+  for select using (auth.role() = 'authenticated');
+create policy "authenticated members can update lobby state" on game_lobby
+  for update using (auth.role() = 'authenticated');
 
-create policy "anyone can read round history" on round_history
-  for select using (true);
-create policy "anyone can log a completed round" on round_history
-  for insert with check (true);
+create policy "authenticated members can read round history" on round_history
+  for select using (auth.role() = 'authenticated');
+create policy "authenticated members can log a completed round" on round_history
+  for insert with check (auth.role() = 'authenticated');
 
 -- Note: TMDB's /watch/providers endpoint does not return deep links into
 -- Netflix/Prime/etc (blocked by its JustWatch data agreement). watch_page_url
@@ -142,3 +216,38 @@ create policy "anyone can log a completed round" on round_history
 --
 -- round_history is a new table for Module 5c, not an alter — see its own
 -- CREATE TABLE above; ran directly against the live project the same way.
+
+-- profiles (Module 7) is a new table, same as round_history above — ran
+-- directly against the live project via its own CREATE TABLE block earlier
+-- in this file, not an alter.
+--
+-- movie_repo/game_lobby/round_history already existed live with the
+-- original "anyone can ..." policies, so what actually ran against the
+-- live project is a drop-and-recreate, not the plain CREATE POLICY blocks
+-- above (which only read correctly for a fresh, from-scratch build):
+--
+-- drop policy "anyone can read movies" on movie_repo;
+-- drop policy "anyone can add movies" on movie_repo;
+-- drop policy "anyone can mark movies watched" on movie_repo;
+-- create policy "authenticated members can read movies" on movie_repo
+--   for select using (auth.role() = 'authenticated');
+-- create policy "authenticated members can add movies" on movie_repo
+--   for insert with check (auth.role() = 'authenticated');
+-- create policy "authenticated members can update movies" on movie_repo
+--   for update using (auth.role() = 'authenticated');
+-- create policy "authenticated members can delete movies" on movie_repo
+--   for delete using (auth.role() = 'authenticated');
+--
+-- drop policy "anyone can read lobby state" on game_lobby;
+-- drop policy "anyone can update lobby state" on game_lobby;
+-- create policy "authenticated members can read lobby state" on game_lobby
+--   for select using (auth.role() = 'authenticated');
+-- create policy "authenticated members can update lobby state" on game_lobby
+--   for update using (auth.role() = 'authenticated');
+--
+-- drop policy "anyone can read round history" on round_history;
+-- drop policy "anyone can log a completed round" on round_history;
+-- create policy "authenticated members can read round history" on round_history
+--   for select using (auth.role() = 'authenticated');
+-- create policy "authenticated members can log a completed round" on round_history
+--   for insert with check (auth.role() = 'authenticated');

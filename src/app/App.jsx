@@ -3,28 +3,45 @@ import RepoPanel from '../features/repo/RepoPanel'
 import DecisionEngine from '../features/decision-engine/DecisionEngine'
 import ArenaGame from '../features/arena/ArenaGame'
 import StatsPage from '../features/stats/StatsPage'
-import { useLocalStorageState } from '../shared/useLocalStorageState'
+import { signOut } from '../shared/authApi'
+import AuthGate from './AuthGate'
+import ManageInvites from './ManageInvites'
 import Entrance from './Entrance'
 
-// Module 1 needs a real name for `movie_repo.added_by` — this is the "typed
-// once, stored in localStorage" identity the spec's Architecture section
-// describes ("Not real auth — stated explicitly, not implied to be more").
-// Lives here, not inside RepoPanel, because Module 3's veto attribution
-// will need the same name later.
+// Module 7 — replaces the old "type a name once, store it in localStorage"
+// identity entirely. AuthGate is the outermost gate now: nothing below
+// mounts without a real, invited-and-not-revoked session with a display
+// name already set. addedBy comes from profile.display_name, not a typed
+// string — see spec.md's "Real accounts & access control (Module 7)".
 export default function App() {
-  const [name, setName] = useLocalStorageState('watchroulette:name', '')
-  // Module 5c's stats page: a plain in-page toggle, not a route — see
-  // StatsPage.jsx's own comment on why. "Prominence" was explicitly
-  // decided during that module's design (a normal header nav item, not a
-  // hidden/buried toggle), not left open the way it originally was.
-  const [view, setView] = useState('game')
+  return <AuthGate>{({ profile, session }) => <AppShell profile={profile} session={session} />}</AuthGate>
+}
+
+// A plain in-page toggle between three views, not routes — same reasoning
+// as Module 5c's stats page (see StatsPage.jsx's own comment): this app has
+// deliberately never needed routing infrastructure for one or two extra
+// views.
+function AppShell({ profile, session }) {
+  const [view, setView] = useState('game') // game | stats | invites
 
   return (
     <Entrance>
       <div className="min-h-screen flex flex-col bg-page">
-        <header className="flex items-center justify-between px-6 py-4 border-b border-gold/25">
+        <header className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-gold/25">
           <h1 className="font-display text-xl font-semibold text-cream">WatchRoulette</h1>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            {profile.is_owner && (
+              <button
+                type="button"
+                onClick={() => setView((current) => (current === 'invites' ? 'game' : 'invites'))}
+                aria-pressed={view === 'invites'}
+                className={`text-sm font-medium transition duration-150 ease-out ${
+                  view === 'invites' ? 'text-gold' : 'text-warmgray hover:text-gold'
+                }`}
+              >
+                Manage Invites
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setView((current) => (current === 'stats' ? 'game' : 'stats'))}
@@ -35,29 +52,31 @@ export default function App() {
             >
               Stats
             </button>
-            <input
-              type="text"
-              aria-label="Your name"
-              placeholder="Your name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className="rounded-lg bg-card px-3 py-1.5 text-sm text-cream placeholder:text-warmgray/60 outline-none ring-1 ring-gold/20 transition duration-150 ease-out focus:ring-2 focus:ring-gold"
-            />
+            <span className="text-sm text-cream">{profile.display_name}</span>
+            <button
+              type="button"
+              onClick={() => signOut()}
+              className="text-sm font-medium text-warmgray transition duration-150 ease-out hover:text-gold"
+            >
+              Sign out
+            </button>
           </div>
         </header>
 
-        {view === 'stats' ? (
+        {view === 'invites' ? (
+          <ManageInvites accessToken={session.access_token} />
+        ) : view === 'stats' ? (
           <StatsPage />
         ) : (
           <main className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6">
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15">
-              <RepoPanel addedBy={name || 'Someone'} />
+            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
+              <RepoPanel addedBy={profile.display_name} />
             </section>
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15">
-              <DecisionEngine addedBy={name || 'Someone'} />
+            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
+              <DecisionEngine addedBy={profile.display_name} />
             </section>
-            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15">
-              <ArenaGame addedBy={name || 'Someone'} />
+            <section className="bg-card rounded-xl p-4 ring-1 ring-gold/15 min-w-0">
+              <ArenaGame addedBy={profile.display_name} />
             </section>
           </main>
         )}

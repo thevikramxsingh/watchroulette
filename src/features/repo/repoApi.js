@@ -1,4 +1,17 @@
 import { supabase } from '../../shared/supabaseClient'
+import { getSession } from '../../shared/authApi'
+
+// Module 7: both TMDB proxy endpoints now require a valid Supabase session
+// (see api/tmdb-search.js/api/tmdb-videos.js's own comments on why) — this
+// attaches the current session's token the same way to both call sites
+// below, rather than duplicating the same three lines twice. AuthGate
+// guarantees a session exists by the time either of these ever runs (see
+// spec.md's "login required for everything"), so the empty-object fallback
+// is defensive, not an expected path.
+async function authHeaders() {
+  const session = await getSession()
+  return session ? { Authorization: `Bearer ${session.access_token}` } : {}
+}
 
 // A duplicate would silently double a title's odds in the spin wheel (see
 // spec's "Repo — detail"). This client-side check is a UX nicety that stops
@@ -26,7 +39,7 @@ export async function fetchMovies() {
 // found" outcome as a genuinely trailer-less movie) rather than throwing.
 async function fetchTrailerKey(tmdbId) {
   try {
-    const res = await fetch(`/api/tmdb-videos?id=${tmdbId}`)
+    const res = await fetch(`/api/tmdb-videos?id=${tmdbId}`, { headers: await authHeaders() })
     if (!res.ok) return null
     const data = await res.json()
     return data.trailerKey ?? null
@@ -105,7 +118,9 @@ export async function restoreMovie(movie) {
 // Talks to our own serverless proxy (api/tmdb-search.js), never TMDB
 // directly — the API key never reaches this file or the browser bundle.
 export async function searchTmdb(query) {
-  const res = await fetch(`/api/tmdb-search?query=${encodeURIComponent(query)}`)
+  const res = await fetch(`/api/tmdb-search?query=${encodeURIComponent(query)}`, {
+    headers: await authHeaders(),
+  })
   if (!res.ok) throw new Error('Search failed')
   const data = await res.json()
   return data.results

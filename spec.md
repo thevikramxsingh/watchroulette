@@ -275,9 +275,12 @@ Triggered by the user reviewing the live deployment and flagging three things at
 
 **New tables/columns** (full DDL goes in `schema.sql` alongside the existing tables, same as every prior module):
 
+**Amended while actually building this** (caught assembling the Manage Invites screen, not during design): `profiles` also needs an `email` column. `auth.users.email` isn't reachable from client code at all, even under RLS, so without a copy here the invite list would have nothing to show per person except a bare UUID. Written once, by `api/admin-invite.js` at invite time (it already has the email in hand); never updated afterward, so it can't drift from what the account was actually invited under. Not the source of truth for anything auth-related — Supabase's own `auth.users` row is and remains that.
+
 ```sql
 create table profiles (
   id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
   display_name text,
   is_owner boolean not null default false,
   revoked boolean not null default false,
