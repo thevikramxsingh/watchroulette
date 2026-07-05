@@ -12,7 +12,7 @@ Friend group can never agree on what to watch, and re-litigating it wastes time.
 - **Backend**: Supabase (Postgres + auto REST API). No hand-built server for app logic — the server layer isn't the differentiated part of this app, and skipping it is a deliberate scope cut for a one-day build. (One small exception: a serverless function to proxy TMDB calls — see Hosting & access below.)
 - **Movie data**: TMDB API (search, genres, watch providers), called through our own serverless proxy rather than directly from the browser. Free, has watch-provider data (OMDb/IMDb don't), proven at production scale (Plex/Kodi/Jellyfin run on it).
 - **Sync**: 4-second polling of the two Supabase tables, not Realtime subscriptions. Same user-facing effect for a handful of friends, no websocket connection lifecycle to manage/debug in a day.
-- **Identity**: a name typed once, stored in `localStorage`. Not real auth — stated explicitly, not implied to be more.
+- **Identity**: a name typed once, stored in `localStorage`. Not real auth — stated explicitly, not implied to be more. **Superseded 2026-07-05** by real accounts — see "Real accounts & access control (Module 7)" below. Kept here for the record: this was a deliberate simplicity trade-off for a one-day build, revisited once the app was actually live and "anyone can type any name" stopped being theoretical.
 
 ## Data model
 
@@ -33,7 +33,7 @@ Needs to be always live — this doubles as a friend-group tool and an interview
 - **Deploy flow**: one branch per module/feature, each gets its own private Vercel preview URL for testing the real deployed build. Merging to `main` is the moment it goes live to everyone. Straight-to-main pushes are intentionally avoided so a half-finished module never reaches friends live.
 - **TMDB key**: never shipped to the browser. A Vercel serverless function proxies TMDB calls (`/api/tmdb-search`, `/api/tmdb-watch-providers`); the frontend calls our own API, not TMDB directly.
 - **Supabase uptime**: free tier auto-pauses after ~7 days with no activity. A Vercel Cron Job pings the database every couple of days to prevent that — no extra service to sign up for, stays inside Vercel.
-- **Access control**: open — anyone with the link reads/writes the same shared repo and lobby. No login, no room codes. Deliberate simplicity trade-off, not an oversight; revisit with room codes only if it's ever actually abused.
+- **Access control**: open — anyone with the link reads/writes the same shared repo and lobby. No login, no room codes. Deliberate simplicity trade-off, not an oversight; revisit with room codes only if it's ever actually abused. **Superseded 2026-07-05** — see "Real accounts & access control (Module 7)" below. Not "actually abused" in the sense originally meant, but the user reviewing the live deploy correctly flagged that the promise itself ("no outsiders") wasn't true, and a real delete operation had shipped (Module 6) with no matching RLS policy at all — worth fixing before this app gets used as a portfolio demo, not after something goes wrong.
 - **Mobile**: responsive website only, opened via browser. No PWA/install step, no home-screen icon — not worth the extra config for a site that already works fine in a phone browser.
 - **Rollback**: Vercel keeps every previous deploy and supports one-click instant rollback if a bad merge goes live.
 
@@ -248,6 +248,89 @@ A batch of small, cheap additions to the Repo feature — eight from a dedicated
 
 Module 6 is now specified; nothing left open on this front before implementation.
 
+## Real accounts & access control (Module 7)
+
+Triggered by the user reviewing the live deployment and flagging three things at once: nobody was ever actually required to type a real name before acting, the layout broke at some zoom levels (tracked separately, not part of this module), and — the one that changed scope here — anyone with the link could act as anyone, with no way to keep outsiders out. Investigating that third point surfaced a real bug underneath the design question: `movie_repo` had never had a `delete` RLS policy at all, so Module 6's Remove feature has been silently non-functional in production since it shipped. Fixing that properly meant deciding the actual access model first, not just adding a policy — worked through decision-by-decision (grilled one branch at a time, each with its concrete UI/security/functioning implications spelled out before being locked in) since it touches identity, security, and every existing panel simultaneously. This supersedes the "no login" decisions in Architecture and Hosting & access above.
+
+- **Sign-up is closed, not open**: nobody gets an account unless the owner invites them. The first draft of this module allowed open sign-up (any email could request access) — revisited once its actual implication ("a stranger who finds the link can get in, just by owning an email address") was made concrete rather than left abstract. Closed sign-up is the one requirement that was non-negotiable once understood.
+- **Login method**: Supabase Auth's magic link (`signInWithOtp`), no passwords anywhere. Chosen for the lowest friction for a small, infrequent-login friend group — no password-reset flow to build or for anyone to forget. Known wrinkle, accepted as-is: clicking the emailed link on a different device than the one trying to log in logs that *other* device in instead, which can confuse someone the first time.
+- **Enforcement is real, not cosmetic**: the naive version of "invite-only" — a plain table of allowed emails that the login screen checks before calling Supabase — was rejected specifically because Supabase Auth has its own address on the internet, independent of this app's UI. A determined user could call it directly and bypass an app-level-only check entirely. Instead, inviting someone actually creates their Supabase account ahead of time (via `supabase.auth.admin.inviteUserByEmail`, called from a new server-only endpoint using the service-role key, never the browser), and the login screen's `signInWithOtp` call passes `shouldCreateUser: false` — Supabase itself refuses to send a link for an email with no existing account. The lock lives inside Supabase's own gears, not bolted on beside them.
+- **Inviting sends the link immediately**: `inviteUserByEmail` creates the account and emails the first login link in one step — the invited person doesn't need to be separately told to go find the app; they get pulled in with one click, same as an invite email in Slack/Notion.
+- **Manage Invites screen, owner-only**: a new in-app view listing everyone invited (status: invited-but-never-logged-in vs. active vs. revoked), with an email field + Add button and a Revoke button per active person. Visible only when the logged-in account's `profiles.is_owner` is true — nobody else ever sees this screen exists.
+- **`profiles` rows are created at invite time, not at first login (caught in spec self-review)**: the earlier draft assumed the client creates its own `profiles` row after logging in — but the Manage Invites list needs to show "invited, never logged in yet" as a real status, and there's no row to query for that if one only appears once someone actually logs in and sets a name. Fixed by having `api/admin-invite.js` create the `profiles` row itself (server-side, service role) at the same moment it calls `inviteUserByEmail`, with `display_name` left `null` until that person completes the one-time naming prompt. This also means clients never need permission to insert their own row at all — the only client-facing write to `profiles` is updating `display_name` on a row that already exists.
+- **Revoke blocks future access, not past contributions**: revoking calls `supabase.auth.admin.updateUserById(userId, { ban_duration: '876000h' })` — Supabase's ban API has no literal "permanent" value, so a duration of roughly 100 years is the idiomatic stand-in for "indefinitely," a real ban inside Supabase's own auth system, immediately blocking new sign-ins and, within that session's short-lived access-token window (Supabase's default is on the order of an hour), blocking continued use of an already-open session too. Not instantaneous same-second logout — accepted as a known, named gap rather than an overstated guarantee. Whatever the revoked person already added to `movie_repo` or logged in `round_history` is untouched — their name stays on those rows exactly as it was, the same way a removed friend's old messages don't vanish from a group chat. Built from the start, not deferred — the user explicitly asked for this at design time rather than later. Un-revoking (setting `ban_duration: 'none'`) is not being built in this module — nobody's asked for it yet, and the same endpoint could support it later without any design change if that need shows up.
+- **Bootstrap (chicken-and-egg)**: the Manage Invites screen only appears to a logged-in owner, but nothing can log anyone in until an account exists — including the owner's own. Solved with a one-off script (run once against the live Supabase project, not shipped as part of the app) that invites `thevikramxsingh@gmail.com` directly via the same admin API, then sets that row's `profiles.is_owner = true`. Every invite after that one goes through the in-app screen like anyone else's.
+- **`is_owner` as data, not code**: a boolean column on `profiles`, not an email hardcoded into the app — checking a flag scales to ever needing a second owner without editing source; checking a literal email string would not.
+- **Self-promotion, closed off (caught in spec self-review)**: the obvious RLS policy — "a user can update their own profile row" — only restricts *which row* someone can update, not *which columns*. Left as just that, any logged-in member could call a normal update on their own row and set `is_owner: true` on themselves. Closed with a `before update` trigger on `profiles` that rejects any client-initiated change to `is_owner` or `revoked` (the mirrored ban-status flag described below), regardless of what RLS would otherwise allow — the one exception is a request made with the service-role key, which is how `api/admin-invite.js`/`api/admin-revoke.js` themselves legitimately set these columns. A first version of this trigger blocked all updates to those columns unconditionally, which would have also blocked the app's own admin endpoints — fixed by checking `auth.role() = 'service_role'` and only enforcing the restriction for everyone else.
+- **`revoked` mirrors the real ban, purely for display**: the actual access control is the Supabase-level ban `api/admin-revoke.js` sets (see below) — a client can't read that directly, so a `profiles.revoked boolean` column gets set alongside it, in the same request, purely so the Manage Invites screen has something to query for its status list. This flag enforces nothing on its own; even if it were somehow wrong, the real ban is what actually blocks access, not this column.
+- **Display name, unique and DB-enforced**: prompted once, at first login only (a `profiles` row with no `display_name` yet triggers the prompt; saving it is a one-way action, not editable later in this module's scope). Uniqueness is enforced with a case-insensitive unique index on `profiles.display_name`, not just a client-side check before saving — matches this app's own existing pattern for `movie_repo.tmdb_id` (client check as a nicety, DB constraint as the real backstop). Attempting a taken name shows "That name's already in use — try another" and re-prompts.
+- **Read access requires login too**: browsing the Repo, watching a spin, viewing stats — all of it — requires an active session, not just the actions that write data. Chosen for one consistent rule instead of two different ones to maintain.
+- **No per-user ownership walls on actions**: any authenticated (i.e., currently-invited-and-not-revoked) member can add, remove, toggle watched, spin, veto, or play — matching how the app already behaved before accounts existed. Real accounts answer "who can get in," not "who's allowed to touch what once they're in."
+- **RLS rewrite**: every `select`/`insert`/`update` policy on `movie_repo`, `game_lobby`, and `round_history` changes from `using (true)` to `using (auth.role() = 'authenticated')`. A new `delete` policy (same condition) is added to `movie_repo` — this is the fix for the Remove button that's been silently broken since Module 6.
+- **The two TMDB proxies get the same treatment**: `api/tmdb-search.js` and `api/tmdb-videos.js` currently accept requests from anyone, logged in or not — an open "side door" that spends this app's TMDB quota and Vercel function time regardless of whether the caller ever goes through the login screen. Both now require the caller to include a valid Supabase session token, verified server-side (`supabase.auth.getUser(token)`) before proxying to TMDB; no token, no valid session → `401`.
+- **`api/keep-alive.js` switches keys**: the cron ping currently uses the public anon key, which will start failing the moment `game_lobby`'s select policy requires an authenticated session — an internal health check has no user session to present. Fixed by switching it to a new server-only `SUPABASE_SERVICE_ROLE_KEY` env var (bypasses RLS by design; appropriate here since this endpoint isn't a user action, and the key never reaches the browser).
+- **Attribution fields stay plain text**: `added_by`, `active_veto_user`, `round_high_score_holder` etc. are not becoming foreign keys to `profiles` — they stay exactly the text-snapshot columns they already are, just populated from `profile.display_name` at write time instead of a typed string. Consistent with this app's existing convention (`round_history` was already explicitly built as "one row per movie night," not for referential integrity) and avoids a much larger relational rework nobody asked for. Trade-off, carried forward rather than newly introduced: a later display-name change won't retroactively relabel old cards.
+- **Rollout is reactive, by choice**: no attempt to pre-seed the allowlist with everyone already using the app today. Friends who are mid-use when this ships will hit an "invite only" wall the next time they try to log in, until the owner notices and adds them via Manage Invites. Considered and explicitly accepted, not an oversight — the alternative (collecting everyone's email up front before shipping) was offered and declined.
+- **The old typed-name `localStorage` key is simply abandoned**: no migration needed — accounts replace it outright, and there's no meaningful data in it worth carrying forward (it was never anything but a display string).
+
+**New tables/columns** (full DDL goes in `schema.sql` alongside the existing tables, same as every prior module):
+
+```sql
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  display_name text,
+  is_owner boolean not null default false,
+  revoked boolean not null default false,
+  created_at timestamp with time zone default now()
+);
+create unique index profiles_display_name_unique_ci on profiles (lower(display_name));
+
+alter table profiles enable row level security;
+create policy "authenticated can read all profiles" on profiles
+  for select using (auth.role() = 'authenticated');
+create policy "a user can set their own profile" on profiles
+  for update using (auth.uid() = id);
+-- No insert policy: rows are only ever created server-side, by
+-- api/admin-invite.js (at invite time) and the one-off bootstrap script
+-- (for the owner) — both run with the service role, which bypasses RLS
+-- entirely, so a client-facing insert policy isn't needed and isn't added.
+
+-- Closes the self-promotion gap above: the update policy alone can't stop
+-- someone from changing their own is_owner/revoked columns, since RLS only
+-- sees "is this my row?", not "which columns is this request touching?".
+-- Blocks any client-initiated change to either column; the service-role
+-- check is what lets api/admin-invite.js/api/admin-revoke.js themselves
+-- still legitimately set them.
+create or replace function reject_admin_column_changes() returns trigger as $$
+begin
+  if auth.role() = 'service_role' then
+    return new;
+  end if;
+
+  if new.is_owner is distinct from old.is_owner
+     or new.revoked is distinct from old.revoked then
+    raise exception 'is_owner/revoked cannot be changed by a client update';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger profiles_guard_admin_columns
+  before update on profiles
+  for each row execute function reject_admin_column_changes();
+```
+
+Existing tables' policies get replaced (not added alongside) — `using (true)` → `using (auth.role() = 'authenticated')` on every `select`/`insert`/`update` policy across `movie_repo`, `game_lobby`, `round_history`, plus the new `movie_repo` delete policy described above.
+
+**New server-only endpoints** (service-role key, never exposed to the browser, same pattern as `api/keep-alive.js` already establishes for using elevated access from a serverless function):
+- `api/admin-invite.js` — owner-only (verifies the caller's own session + `profiles.is_owner` first), takes an email, calls `inviteUserByEmail`.
+- `api/admin-revoke.js` — owner-only, takes a user id, calls `updateUserById` with a ban and, in the same request, sets that user's `profiles.revoked = true` so the Manage Invites list reflects it immediately.
+
+**Testing approach**: same conventions as every other module — pure logic (e.g., the owner-check, invite validation) gets unit tests; UI states (login screen, "check your email," display-name prompt, Manage Invites list, revoke confirmation) get component tests mocking `supabase.auth` calls, the same way `RepoPanel.test.jsx`/`DecisionEngine.test.jsx` already mock `repoApi`/`lobbyApi`. RLS correctness itself isn't unit-tested in this stack — consistent with how Modules 1–6 verified their own policies, this gets checked live against the real Supabase project (`information_schema`/`pg_policies` queries) after migration, not through a new automated layer invented just for this module.
+
+Module 7 is now specified; nothing left open on this front before implementation.
+
 ## Build order (checkpointed)
 
 - [x] **Module 0** — scaffold, Tailwind, Supabase client, empty three-panel shell. Checkpoint: app runs, panels render, no console errors.
@@ -260,6 +343,7 @@ Module 6 is now specified; nothing left open on this front before implementation
 - [ ] **Module 5b** — curtain-reveal + reveal choreography (ticks, micro-pause, chime, confetti, eyebrow text) + entrance moment (after the Module 2 wheel fix). Checkpoint: winning a spin plays all five reveal beats in order and lands on the correct poster; a fresh browser (cleared storage) shows the entrance curtain once and never again on reload.
 - [ ] **Module 5c** — round history + stats page. Checkpoint: finishing a round and clicking New Round produces a new row in `round_history`; the stats page (reachable from a visible header nav item) shows correct numbers matching what's actually in the DB.
 - [ ] **Module 6** — Repo enhancements: remove action, added-by + sort, named duplicate warning, Repo genre filter, "New" tag, last-watched line, copy-link button, undo toast. Checkpoint: each of the eight additions works on real data with no regressions to existing Repo tests.
+- [ ] **Module 7** — real accounts & access control: Supabase Auth magic-link login, owner-only invite/revoke via `inviteUserByEmail`/`updateUserById`, `profiles` table with unique display names, RLS rewritten to authenticated-only across all three tables plus a new `movie_repo` delete policy, both TMDB proxies and the keep-alive cron updated to match. Checkpoint: an uninvited email cannot log in; an invited email gets a working magic link and can set a unique display name; every panel is unreachable without a session; the owner revoking a member locks that member out of new logins while leaving their past contributions untouched.
 
 ## Working agreement
 
