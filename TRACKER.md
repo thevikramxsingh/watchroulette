@@ -7,7 +7,7 @@ Single source of truth for "what's actually done" vs "what's just been talked ab
 | Area | Designed | Built |
 |---|---|---|
 | Visual design system (tokens, dark mode, amber accent, states) | Yes — `spec.md` | Partial — used in Module 0 shell + Module 1 (`RepoPanel.jsx`) |
-| Hosting & access (Vercel, TMDB proxy, keep-alive, open access) | Yes — `spec.md` | No — not deployed yet |
+| Hosting & access (Vercel, TMDB proxy, keep-alive, open access) | Yes — `spec.md` | Prep done, deploy pending you — see "Deployment prep" below |
 | Supabase project + schema | Yes | **Done** — `schema.sql` run against the live project (`zfensxwlqbpdqbgfsolq`), both tables + RLS policies confirmed live, credentials in `.env` |
 | TMDB API key | Yes | **Done** — root cause was a real India-side DNS block on `themoviedb.org`, not a general outage; fixed by switching Chrome's Secure DNS to Cloudflare (1.1.1.1). Key retrieved, v3 key in `.env`. |
 | Polish additions (motion, confetti, sound, count-up) | Yes — `spec.md` | Partial — Arena's "target hit" sound built (synthesized, see Module 3's tweak notes); confetti/motion/count-up still not built |
@@ -231,6 +231,24 @@ Confirmed live afterward: `round_high_score_holder | text` on `game_lobby`, and 
 **Sandbox note, not a test failure:** this environment's own command-timeout kept killing the full 15-file, 108-test `vitest run` partway through mid-run (each individual test file was passing every time it got that far) — verified equivalently instead by running every test file in isolation (all passing) plus the known-flaky `ArenaGame.test.jsx` file specifically re-run standalone multiple times (9/9 every time), the same verification depth as every other module above, just split across more, smaller command calls instead of one.
 
 **Module 6 is fully built and tested — one manual checkpoint left before this module is done.**
+
+## Deployment prep (2026-07-05)
+
+Everything that could be done without Vikram's own GitHub/Vercel accounts is done; the actual account-linking steps below are the one thing left that genuinely needs him — creating accounts, OAuth-connecting them, and entering API keys into a third-party dashboard are all outside what an agent should do on someone's behalf.
+
+**What's done:**
+- **Git repo initialized** — this was never actually created despite `spec.md` saying "already have one." One initial commit, 67 files, clean working tree. `.env` confirmed excluded (verified via `git check-ignore`) — no secrets ever entered version control.
+- **Supabase keep-alive cron** — new `api/keep-alive.js` (same low-level `res.writeHead`/`res.end` style as the other two `api/*.js` proxies, for consistency — Vercel's Node runtime supports higher-level `res.status().json()` helpers too, but this project has only ever exercised the lower-level style, so staying with what's actually proven rather than an untested assumption) does a trivial `select id from game_lobby limit 1` read. New `vercel.json` schedules it every 2 days (`0 0 */2 * *`) via Vercel Cron Jobs — confirmed via a web search that Vercel's free Hobby plan supports up to 100 cron jobs, capped at *no more than* once/day each; every-2-days is well inside that (the cap is a ceiling on frequency, not a floor).
+- **Could not live-test the keep-alive endpoint's actual Supabase call** — this sandbox's shell blocks outbound `fetch()` to arbitrary external domains entirely (confirmed by testing a plain `fetch()` to TMDB too, which failed identically) — a sandbox network-policy limitation, not a code issue. The code mirrors two already-proven patterns exactly (the existing `tmdb-search.js`/`tmdb-videos.js` proxy shape, and `supabaseClient.js`'s already-working `createClient(url, key)` usage), so this is a reasonable-confidence port, not a leap — but it's only really verified once it's actually running on Vercel or hit via `curl` after deploy.
+- **README rewritten** — local setup steps corrected (the old version referenced a `VITE_TMDB_API_KEY` that was never real — the actual var is `TMDB_API_KEY`, no prefix, since it's server-side only), plus a new "Deploying (Vercel)" section with the actual steps below.
+- Lint (`oxlint src api`, 0 warnings) and `vite build` both re-confirmed clean with the new files added.
+
+**What's left — needs you, not me, for real security/account reasons:**
+1. Push this repo to GitHub (create the repo on your account, `git remote add origin ...`, `git push`).
+2. In Vercel: "Add New Project" → import that GitHub repo. Vercel auto-detects the Vite preset; no build command changes needed.
+3. Before the first deploy, add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `TMDB_API_KEY` (same values as your local `.env`) under Vercel's Settings → Environment Variables.
+4. Deploy. Confirm the live URL loads, a search actually returns TMDB results (proves the proxy + env var made it through), and a spin/reveal/veto loop works end-to-end against the real Supabase project.
+5. Optional, once you're comfortable it's stable: `curl https://<your-app>.vercel.app/api/keep-alive` once by hand to confirm it returns `{"ok":true,...}` rather than waiting up to 2 days for the cron's first real run.
 
 ## Still-open cross-cutting topics (deliberately deferred, not forgotten)
 
