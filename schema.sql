@@ -134,6 +134,28 @@ create trigger profiles_guard_admin_columns
   before update on profiles
   for each row execute function reject_admin_column_changes();
 
+-- Verified live (2026-07-06): revoking someone via Manage Invites bans them
+-- from *future* sign-ins (admin-revoke.js's ban_duration) and flips this
+-- row's `revoked` to true, but Supabase — like any stateless-JWT auth
+-- system — has no way to invalidate an access token that's already been
+-- issued; it stays valid until it naturally expires (the `exp` claim,
+-- default ~1 hour), ban or no ban. Every policy below this point only ever
+-- checked `auth.role() = 'authenticated'`, which a revoked person's
+-- still-valid token satisfies just fine — so a freshly revoked person kept
+-- full read/write access to the actual game (repo, wheel, arena) for up to
+-- an hour after being "removed," confirmed live by testing it directly.
+-- This function is the real fix: it's not about the token, it's about
+-- Postgres itself refusing the request regardless of whether the token is
+-- valid. security definer + stable so it's cheap (evaluated once per
+-- statement, not once per row) and doesn't depend on profiles' own SELECT
+-- policy happening to allow it.
+create or replace function is_active_member() returns boolean as $$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and revoked = false
+  );
+$$ language sql security definer stable set search_path = public;
+
 insert into game_lobby (id) values ('current_session');
 
 alter table movie_repo enable row level security;
@@ -144,28 +166,33 @@ alter table round_history enable row level security;
 -- replaces the original "anyone can ..." open policies (see the migration
 -- block at the end of this file for what actually ran against the already-
 -- live project, since these tables existed long before accounts did).
+--
+-- is_active_member() (added post-launch, see its own comment above) is
+-- ANDed onto every one of these — `authenticated` alone only proves the
+-- request carries *some* still-valid token, not that the person behind it
+-- hasn't been revoked since that token was issued.
 create policy "authenticated members can read movies" on movie_repo
-  for select using (auth.role() = 'authenticated');
+  for select using (auth.role() = 'authenticated' and is_active_member());
 create policy "authenticated members can add movies" on movie_repo
-  for insert with check (auth.role() = 'authenticated');
+  for insert with check (auth.role() = 'authenticated' and is_active_member());
 create policy "authenticated members can update movies" on movie_repo
-  for update using (auth.role() = 'authenticated');
+  for update using (auth.role() = 'authenticated' and is_active_member());
 -- New in Module 7 — repoApi.removeMovie() has existed since Module 6 with
 -- no matching delete policy at all, so it's been silently failing in
 -- production (RLS denies by default with no policy present) since it
 -- shipped. This is the fix.
 create policy "authenticated members can delete movies" on movie_repo
-  for delete using (auth.role() = 'authenticated');
+  for delete using (auth.role() = 'authenticated' and is_active_member());
 
 create policy "authenticated members can read lobby state" on game_lobby
-  for select using (auth.role() = 'authenticated');
+  for select using (auth.role() = 'authenticated' and is_active_member());
 create policy "authenticated members can update lobby state" on game_lobby
-  for update using (auth.role() = 'authenticated');
+  for update using (auth.role() = 'authenticated' and is_active_member());
 
 create policy "authenticated members can read round history" on round_history
-  for select using (auth.role() = 'authenticated');
+  for select using (auth.role() = 'authenticated' and is_active_member());
 create policy "authenticated members can log a completed round" on round_history
-  for insert with check (auth.role() = 'authenticated');
+  for insert with check (auth.role() = 'authenticated' and is_active_member());
 
 -- Note: TMDB's /watch/providers endpoint does not return deep links into
 -- Netflix/Prime/etc (blocked by its JustWatch data agreement). watch_page_url
@@ -265,3 +292,46 @@ create policy "authenticated members can log a completed round" on round_history
 --   for select using (auth.role() = 'authenticated');
 -- create policy "authenticated members can log a completed round" on round_history
 --   for insert with check (auth.role() = 'authenticated');
+
+-- is_active_member() (post-launch security fix, 2026-07-06): closes the
+-- "revoked person keeps full access until their token happens to expire"
+-- gap — see this function's own comment earlier in this file for the full
+-- why. Run this whole block against the live project in one go (SQL
+-- Editor -> New query -> paste this block -> Run). Safe to run even while
+-- people are actively using the app: each drop+create pair is effectively
+-- instant, and nobody's mid-request will see a window with no policy at
+-- all (Postgres holds the old policy until the new one's DDL commits).
+--
+-- create or replace function is_active_member() returns boolean as $$
+--   select exists (
+--     select 1 from profiles
+--     where id = auth.uid() and revoked = false
+--   );
+-- $$ language sql security definer stable set search_path = public;
+--
+-- drop policy "authenticated members can read movies" on movie_repo;
+-- drop policy "authenticated members can add movies" on movie_repo;
+-- drop policy "authenticated members can update movies" on movie_repo;
+-- drop policy "authenticated members can delete movies" on movie_repo;
+-- create policy "authenticated members can read movies" on movie_repo
+--   for select using (auth.role() = 'authenticated' and is_active_member());
+-- create policy "authenticated members can add movies" on movie_repo
+--   for insert with check (auth.role() = 'authenticated' and is_active_member());
+-- create policy "authenticated members can update movies" on movie_repo
+--   for update using (auth.role() = 'authenticated' and is_active_member());
+-- create policy "authenticated members can delete movies" on movie_repo
+--   for delete using (auth.role() = 'authenticated' and is_active_member());
+--
+-- drop policy "authenticated members can read lobby state" on game_lobby;
+-- drop policy "authenticated members can update lobby state" on game_lobby;
+-- create policy "authenticated members can read lobby state" on game_lobby
+--   for select using (auth.role() = 'authenticated' and is_active_member());
+-- create policy "authenticated members can update lobby state" on game_lobby
+--   for update using (auth.role() = 'authenticated' and is_active_member());
+--
+-- drop policy "authenticated members can read round history" on round_history;
+-- drop policy "authenticated members can log a completed round" on round_history;
+-- create policy "authenticated members can read round history" on round_history
+--   for select using (auth.role() = 'authenticated' and is_active_member());
+-- create policy "authenticated members can log a completed round" on round_history
+--   for insert with check (auth.role() = 'authenticated' and is_active_member());
