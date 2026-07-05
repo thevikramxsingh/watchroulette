@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import AuthGate from './AuthGate'
-import { getSession, fetchProfile } from '../shared/authApi'
+import { getSession, fetchProfile, signOut } from '../shared/authApi'
 
 // Same isolation pattern App.test.jsx uses for the three feature panels —
-// this file only tests AuthGate's own orchestration (which of the four
+// this file only tests AuthGate's own orchestration (which of the five
 // states to show), not LoginScreen's or DisplayNamePrompt's own behavior
 // (covered by their own test files).
 vi.mock('./LoginScreen', () => ({ default: () => <div>Login screen stub</div> }))
@@ -17,11 +18,13 @@ vi.mock('../shared/authApi', () => ({
   getSession: vi.fn(),
   onAuthStateChange: vi.fn(() => ({ unsubscribe: vi.fn() })),
   fetchProfile: vi.fn(),
+  signOut: vi.fn(),
 }))
 
 beforeEach(() => {
   getSession.mockReset()
   fetchProfile.mockReset()
+  signOut.mockReset()
 })
 
 describe('AuthGate', () => {
@@ -48,5 +51,40 @@ describe('AuthGate', () => {
     render(<AuthGate>{({ profile }) => <div>Welcome, {profile.display_name}</div>}</AuthGate>)
 
     expect(await screen.findByText('Welcome, Vikram')).toBeInTheDocument()
+  })
+
+  it('shows a recoverable error instead of loading forever when the profile fetch fails', async () => {
+    getSession.mockResolvedValue({ user: { id: 'user-1' } })
+    fetchProfile.mockRejectedValue(new Error('boom'))
+    render(<AuthGate>{() => <div>App content</div>}</AuthGate>)
+
+    expect(await screen.findByText('Couldn’t load your account.')).toBeInTheDocument()
+    expect(screen.queryByText('App content')).not.toBeInTheDocument()
+  })
+
+  it('retries the profile fetch when Try again is clicked', async () => {
+    getSession.mockResolvedValue({ user: { id: 'user-1' } })
+    fetchProfile
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ id: 'user-1', display_name: 'Vikram', is_owner: false })
+    const user = userEvent.setup()
+    render(<AuthGate>{({ profile }) => <div>Welcome, {profile.display_name}</div>}</AuthGate>)
+
+    await screen.findByText('Couldn’t load your account.')
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText('Welcome, Vikram')).toBeInTheDocument()
+  })
+
+  it('signs out from the error state instead of leaving the user stuck', async () => {
+    getSession.mockResolvedValue({ user: { id: 'user-1' } })
+    fetchProfile.mockRejectedValue(new Error('boom'))
+    const user = userEvent.setup()
+    render(<AuthGate>{() => <div>App content</div>}</AuthGate>)
+
+    await screen.findByText('Couldn’t load your account.')
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(signOut).toHaveBeenCalled()
   })
 })
